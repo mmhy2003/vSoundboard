@@ -3,7 +3,7 @@ CARGO ?= cargo
 SMOKE_ARGS ?=
 
 .DEFAULT_GOAL := help
-.PHONY: help build release run run-release test test-all fmt fmt-check lint check smoke clean
+.PHONY: help build release installer run run-release test test-all fmt fmt-check lint check smoke clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -13,6 +13,9 @@ build: ## Debug build
 
 release: ## Optimized build -> target/release/vsoundboard.exe
 	$(CARGO) build --release
+
+installer: release ## Build dist/vSoundboard-Setup-<version>.exe (needs Inno Setup 7's iscc on PATH)
+	iscc installer/vsoundboard.iss
 
 run: ## Run the app (debug, with a console for logs)
 	$(CARGO) run
