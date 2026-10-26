@@ -60,6 +60,7 @@ fn main() -> eframe::Result {
             let mut app = SoundboardApp::new(cfg, path, eng);
             app.notice = notice;
             app.check_files();
+            app.enable_hotkeys();
             Ok(Box::new(app))
         }),
     )

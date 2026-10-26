@@ -1,8 +1,13 @@
+use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::{Arc, RwLock};
 
+use crossbeam_channel::Sender;
 use eframe::egui;
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
+use crate::audio::engine::EngineCommand;
 use crate::config::Config;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -232,6 +237,75 @@ pub fn from_egui(key: egui::Key, mods: egui::Modifiers) -> Option<HotKey> {
     Some(HotKey::new(Some(m), code))
 }
 
+/// Registers shortcuts with Windows and sends their actions straight to the engine, so they
+/// work while the window is hidden. Must be created on the thread running the window's event loop.
+pub struct HotkeyRegistry {
+    manager: GlobalHotKeyManager,
+    registered: Vec<HotKey>,
+    actions: Arc<RwLock<HashMap<u32, HotkeyAction>>>,
+}
+
+impl HotkeyRegistry {
+    pub fn new(engine_tx: Sender<EngineCommand>) -> Result<Self, String> {
+        let manager = GlobalHotKeyManager::new().map_err(|e| e.to_string())?;
+        let actions: Arc<RwLock<HashMap<u32, HotkeyAction>>> = Arc::default();
+        let lookup = actions.clone();
+        GlobalHotKeyEvent::set_event_handler(Some(move |e: GlobalHotKeyEvent| {
+            if e.state != HotKeyState::Pressed {
+                return;
+            }
+            let action = lookup.read().ok().and_then(|m| m.get(&e.id).copied());
+            let cmd = match action {
+                Some(HotkeyAction::PlayPad(id)) => EngineCommand::PlayPad(id),
+                Some(HotkeyAction::Stop) => EngineCommand::Stop,
+                Some(HotkeyAction::ToggleMode) => EngineCommand::ToggleMode,
+                None => return,
+            };
+            let _ = engine_tx.send(cmd);
+        }));
+        Ok(Self {
+            manager,
+            registered: Vec::new(),
+            actions,
+        })
+    }
+
+    /// Unregister all, then register `bindings(cfg)`. Returns failures as (action, user message).
+    pub fn sync(&mut self, cfg: &Config) -> Vec<(HotkeyAction, String)> {
+        self.suspend();
+        let mut failures = Vec::new();
+        let mut actions = HashMap::new();
+        for (hk, action) in bindings(cfg) {
+            match self.manager.register(hk) {
+                Ok(()) => {
+                    self.registered.push(hk);
+                    actions.insert(hk.id(), action);
+                }
+                Err(global_hotkey::Error::AlreadyRegistered(_)) => {
+                    failures.push((
+                        action,
+                        format!("{} is already used by another app.", label(hk)),
+                    ));
+                }
+                Err(e) => failures.push((action, format!("Couldn't set {}: {e}", label(hk)))),
+            }
+        }
+        if let Ok(mut m) = self.actions.write() {
+            *m = actions;
+        }
+        failures
+    }
+
+    /// Unregister everything (while capturing a new shortcut, so existing ones reach the window).
+    pub fn suspend(&mut self) {
+        let _ = self.manager.unregister_all(&self.registered);
+        self.registered.clear();
+        if let Ok(mut m) = self.actions.write() {
+            m.clear();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,5 +457,29 @@ mod tests {
             hk(Some(Modifiers::CONTROL), Code::Digit0),
             HotkeyAction::Stop
         )));
+    }
+
+    #[test]
+    fn registry_reports_combo_held_elsewhere() {
+        // Ctrl+Alt+Shift+F23: nothing real uses it. The first registry stands in for "another app".
+        let cfg = cfg_with_pad("Airhorn", "shift+control+alt+F23");
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut first = HotkeyRegistry::new(tx.clone()).unwrap();
+        assert!(first.sync(&cfg).is_empty());
+
+        let mut second = HotkeyRegistry::new(tx).unwrap();
+        let failures = second.sync(&cfg);
+        assert_eq!(
+            failures,
+            vec![(
+                HotkeyAction::PlayPad(1),
+                "Ctrl+Shift+Alt+F23 is already used by another app.".to_string()
+            )]
+        );
+
+        // Once released, it can be taken.
+        first.suspend();
+        assert!(second.sync(&cfg).is_empty());
+        second.suspend();
     }
 }

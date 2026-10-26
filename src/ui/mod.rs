@@ -1,5 +1,6 @@
 mod board;
 mod bottom_bar;
+mod capture;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -10,6 +11,9 @@ use eframe::egui;
 use crate::audio::engine::{EngineCommand, EngineEvent, EngineHandle};
 use crate::audio::player::PlayerEvent;
 use crate::config::{self, Config, RoutingMode};
+use crate::hotkeys::{HotkeyAction, HotkeyRegistry};
+
+pub use capture::Capture;
 
 pub const SUPPORTED_EXTENSIONS: [&str; 4] = ["mp3", "wav", "ogg", "flac"];
 
@@ -27,6 +31,10 @@ pub struct SoundboardApp {
     pub playing: Option<u64>,
     pub pad_errors: HashMap<u64, String>,
     pub notice: Option<String>,
+    pub capture: Option<Capture>,
+    /// Pad being renamed and the text typed so far.
+    pub renaming: Option<(u64, String)>,
+    pub hotkeys: Option<HotkeyRegistry>,
 }
 
 /// The pad table the engine needs: (id, file, volume).
@@ -65,7 +73,53 @@ impl SoundboardApp {
             playing: None,
             pad_errors: HashMap::new(),
             notice: None,
+            capture: None,
+            renaming: None,
+            hotkeys: None,
         }
+    }
+
+    /// Install global shortcuts; call on the UI thread.
+    pub fn enable_hotkeys(&mut self) {
+        match HotkeyRegistry::new(self.engine.tx.clone()) {
+            Ok(reg) => {
+                self.hotkeys = Some(reg);
+                let failures = self.sync_hotkeys();
+                if !failures.is_empty() {
+                    let msgs: Vec<String> = failures.into_iter().map(|(_, m)| m).collect();
+                    self.notice = Some(msgs.join(" "));
+                }
+            }
+            Err(e) => self.notice = Some(format!("Keyboard shortcuts are unavailable: {e}")),
+        }
+    }
+
+    pub fn sync_hotkeys(&mut self) -> Vec<(HotkeyAction, String)> {
+        match self.hotkeys.as_mut() {
+            Some(reg) => reg.sync(&self.config),
+            None => Vec::new(),
+        }
+    }
+
+    pub fn suspend_hotkeys(&mut self) {
+        if let Some(reg) = self.hotkeys.as_mut() {
+            reg.suspend();
+        }
+    }
+
+    pub fn start_capture(&mut self, target: HotkeyAction) {
+        self.suspend_hotkeys();
+        self.capture = Some(Capture::new(target));
+    }
+
+    pub fn remove_pad(&mut self, id: u64) {
+        if self.playing == Some(id) {
+            self.engine.send(EngineCommand::Stop);
+        }
+        self.config.remove_pad(id);
+        self.pad_errors.remove(&id);
+        self.persist();
+        self.sync_hotkeys();
     }
 
     /// Save the config and give the engine the current pad table.
@@ -187,6 +241,8 @@ impl eframe::App for SoundboardApp {
             }
             Screen::Settings => board::show(self, ui),
         }
+        capture::show(self, ui.ctx());
+        board::rename_dialog(self, ui.ctx());
         if self.playing.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(200));
         }

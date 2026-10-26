@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32, RichText, Vec2};
 
 use super::{SUPPORTED_EXTENSIONS, Screen, SoundboardApp, grid_columns};
-use crate::hotkeys;
+use crate::hotkeys::{self, HotkeyAction};
 
 const PAD_SIZE: Vec2 = Vec2::new(140.0, 64.0);
 
@@ -86,5 +86,85 @@ fn pad_button(
     }
     if response.clicked() {
         app.play(id);
+    }
+    response.context_menu(|ui| pad_menu(app, ui, id));
+}
+
+fn pad_menu(app: &mut SoundboardApp, ui: &mut egui::Ui, id: u64) {
+    let Some(pad) = app.config.pad(id) else {
+        return;
+    };
+    let name = pad.name.clone();
+    if ui.button("Rename").clicked() {
+        app.renaming = Some((id, name));
+        ui.close();
+    }
+    if ui.button("Set shortcut…").clicked() {
+        app.start_capture(HotkeyAction::PlayPad(id));
+        ui.close();
+    }
+    ui.horizontal(|ui| {
+        ui.label("Volume");
+        let mut vol = app.config.pad(id).map(|p| p.volume).unwrap_or(1.0);
+        let r = ui.add(
+            egui::Slider::new(&mut vol, 0.0..=1.0)
+                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+        );
+        if r.changed() {
+            if let Some(p) = app.config.pad_mut(id) {
+                p.volume = vol;
+            }
+            if app.playing == Some(id) {
+                app.engine.params.pad_gain.store(vol);
+            }
+        }
+        if r.drag_stopped() || (r.changed() && !r.dragged()) {
+            app.persist();
+        }
+    });
+    ui.separator();
+    if ui.button("Remove").clicked() {
+        app.remove_pad(id);
+        ui.close();
+    }
+}
+
+/// Small dialog for renaming a pad; an empty name keeps the old one.
+pub fn rename_dialog(app: &mut SoundboardApp, ctx: &egui::Context) {
+    let Some((id, mut text)) = app.renaming.clone() else {
+        return;
+    };
+    let mut done = None;
+    let response = egui::Modal::new(egui::Id::unique("rename")).show(ctx, |ui| {
+        ui.heading("Rename sound");
+        let edit = ui.text_edit_singleline(&mut text);
+        edit.request_focus();
+        if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            done = Some(true);
+        }
+        ui.horizontal(|ui| {
+            if ui.button("OK").clicked() {
+                done = Some(true);
+            }
+            if ui.button("Cancel").clicked() {
+                done = Some(false);
+            }
+        });
+    });
+    if response.should_close() && done.is_none() {
+        done = Some(false);
+    }
+    match done {
+        None => app.renaming = Some((id, text)),
+        Some(save) => {
+            app.renaming = None;
+            let trimmed = text.trim();
+            if save && !trimmed.is_empty() {
+                if let Some(p) = app.config.pad_mut(id) {
+                    p.name = trimmed.to_string();
+                }
+                app.persist();
+            }
+        }
     }
 }
