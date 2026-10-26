@@ -1,0 +1,12 @@
+# Every push to develop (and every pull request) builds a test installer you can download
+# from the run's Artifacts. Nothing is published.
+name: CI
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml

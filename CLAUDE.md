@@ -8,4 +8,6 @@
 1. Bump `version` in `Cargo.toml` (and `Cargo.lock`) on `develop`, then commit as `release: vX.Y.Z`.
 2. Merge `develop` into `main`.
 3. Tag the merge commit `vX.Y.Z` (annotated) and push `main` and the tag.
-4. The tag publishes a GitHub Release.
+4. The `v*` tag triggers `.github/workflows/release.yml`, which checks the tag against `Cargo.toml`, builds the installer and publishes a GitHub Release.
+
+Pushes to `develop` (and pull requests) run `.github/workflows/ci.yml`, which builds a test installer you can download from the run's Artifacts.

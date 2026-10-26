@@ -1,0 +1,54 @@
+# Builds and checks everything, then produces the installer as an artifact named "installer".
+# Called by ci.yml (develop, pull requests) and release.yml (tags).
+name: Build
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt -- --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --lib --bins
+
+      # Same Inno Setup version as on the owner's PC, pinned by hash.
+      - name: Install Inno Setup 7.1.0
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe'
+          $sha256 = '0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f'
+          $exe = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest $url -OutFile $exe
+          if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $sha256) { throw 'Inno Setup download hash mismatch' }
+          Start-Process $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/DIR=C:\InnoSetup7' -Wait
+          if (-not (Test-Path 'C:\InnoSetup7\ISCC.exe')) { throw 'ISCC.exe not found after install' }
+
+      - name: Build release exe
+        run: cargo build --release
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & 'C:\InnoSetup7\ISCC.exe' installer\vsoundboard.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed with $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: dist/vSoundboard-Setup-*.exe
+          if-no-files-found: error
