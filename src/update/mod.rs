@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 
 use semver::Version;
 
+pub mod net;
+pub mod worker;
+
 pub const API_URL: &str = "https://api.github.com/repos/mmhy2003/vSoundboard/releases/latest";
 pub const RELEASES_PAGE: &str = "https://github.com/mmhy2003/vSoundboard/releases";
 /// "Later" hides the dialog for a day.

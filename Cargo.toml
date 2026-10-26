@@ -15,8 +15,10 @@ rubato = "5.0.1"
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.11.1"
 symphonia = { version = "0.6.1", features = ["mp3"] }
 tray-icon = "0.26.1"
+ureq = "3.5.0"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 winreg = "0.56.0"
 
