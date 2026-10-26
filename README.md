@@ -52,6 +52,17 @@ If you use Push to Talk, sounds only reach the call while you're holding your Pu
 
 If you share your **whole screen with sound**, Discord also records the copy of each sound playing in your headphones, so viewers would hear it twice. Switch the bottom bar to **Go Live**. Sounds then play only to your headphones, and your screen share carries them to viewers once. In Go Live mode, friends in the call who aren't watching your stream won't hear sounds. You can give the switch a shortcut under ⚙ Devices.
 
+## Updates
+
+vSoundboard checks GitHub for a new version when it starts and every 6 hours.
+
+- **When it asks:** only while its window is open and in front. It never interrupts a game or pops up from the tray.
+- **Update now** downloads the new installer, checks it against the checksum GitHub publishes, installs it, and restarts vSoundboard. Your voice in Discord drops for a few seconds while it restarts.
+- **Later** hides the reminder for 24 hours.
+- **What updates don't change:** your sounds, shortcuts, Start with Windows choice or VB-Cable.
+- **If an update can't be installed,** the current version keeps running and vSoundboard tells you, with a link to download it manually.
+- Under ⚙ Devices you can turn off **Automatically check for updates**, or click **Check for updates**.
+
 ## Settings file
 
 Everything is saved automatically to `%APPDATA%\vSoundboard\config.json`. If that file gets damaged, vSoundboard starts fresh and keeps the old file next to it as `config.json.bad-<number>`.

@@ -23,12 +23,14 @@ pub enum UpdateState {
     DownloadFailed { update: Update, reason: String },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Timing {
     /// Delay before the first automatic check.
     pub first: Duration,
     /// Time between automatic checks.
     pub interval: Duration,
+    /// Where installers are downloaded; leftovers are removed at the first scheduled tick.
+    pub download_dir: PathBuf,
 }
 
 impl Default for Timing {
@@ -36,6 +38,7 @@ impl Default for Timing {
         Self {
             first: Duration::from_secs(10),
             interval: Duration::from_secs(6 * 3600),
+            download_dir: download_dir(),
         }
     }
 }
@@ -104,6 +107,7 @@ impl UpdateWorker {
                     }
                 };
                 let mut next_auto = Instant::now() + timing.first;
+                let mut first_tick = true;
                 loop {
                     let wait = next_auto.saturating_duration_since(Instant::now());
                     match rx.recv_timeout(wait) {
@@ -114,7 +118,8 @@ impl UpdateWorker {
                                 update: update.clone(),
                                 done: 0,
                             });
-                            let path = download_dir()
+                            let path = timing
+                                .download_dir
                                 .join(format!("vSoundboard-Setup-{}.exe", update.version));
                             match net::download(&update, &path, &dn, &ca) {
                                 Ok(()) => set(UpdateState::Ready { update, path }),
@@ -139,6 +144,11 @@ impl UpdateWorker {
                                     | UpdateState::DownloadFailed { .. }
                                     | UpdateState::Checking
                             );
+                            // A just-finished update's installer may still have been running
+                            // at startup, so clear old downloads here too.
+                            if std::mem::take(&mut first_tick) && !busy {
+                                let _ = std::fs::remove_dir_all(&timing.download_dir);
+                            }
                             if au.load(Ordering::Relaxed) && !busy {
                                 check(false);
                             }
@@ -211,8 +221,14 @@ mod tests {
         }
     }
 
+    fn test_dir() -> PathBuf {
+        let d = tempfile::tempdir().unwrap().keep();
+        d.join("vSoundboard-update")
+    }
+
     fn slow_timing() -> Timing {
         Timing {
+            download_dir: test_dir(),
             first: Duration::from_secs(3600),
             interval: Duration::from_secs(3600),
         }
@@ -264,6 +280,7 @@ mod tests {
         };
         let base = serve(vec![failing(), failing()]);
         let timing = Timing {
+            download_dir: test_dir(),
             first: Duration::from_millis(50),
             interval: Duration::from_secs(3600),
         };
@@ -287,6 +304,7 @@ mod tests {
     fn auto_check_off_never_checks() {
         let base = serve(vec![Reply::ok(FIXTURE)]);
         let timing = Timing {
+            download_dir: test_dir(),
             first: Duration::from_millis(20),
             interval: Duration::from_millis(20),
         };
@@ -338,5 +356,27 @@ mod tests {
             wait_for(&w, |s| *s == UpdateState::Idle, 1000),
             UpdateState::Idle
         );
+    }
+
+    #[test]
+    fn first_tick_clears_old_downloads() {
+        let dir = test_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("vSoundboard-Setup-0.0.1.exe"), b"old").unwrap();
+        let timing = Timing {
+            download_dir: dir.clone(),
+            first: Duration::from_millis(50),
+            interval: Duration::from_secs(3600),
+        };
+        // Auto-check off: the cleanup still happens at the first tick.
+        let _w = UpdateWorker::start_with_timing(
+            "http://127.0.0.1:9/unused".into(),
+            Version::new(0, 1, 0),
+            false,
+            Arc::new(|| {}),
+            timing,
+        );
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(!dir.exists(), "leftover download folder should be gone");
     }
 }
