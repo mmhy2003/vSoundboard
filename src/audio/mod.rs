@@ -1,6 +1,7 @@
 pub mod decode;
 pub mod drift;
 pub mod mix;
+pub mod player;
 pub mod shared;
 
 pub use drift::DriftResampler;

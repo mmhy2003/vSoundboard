@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+crossbeam-channel = "0.5.17"
 eframe = "0.37.0"
 global-hotkey = "0.9.0"
 ringbuf = "0.5.3"
