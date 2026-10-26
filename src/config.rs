@@ -42,7 +42,13 @@ pub struct Pad {
 
 impl Default for Pad {
     fn default() -> Self {
-        Self { id: 0, name: String::new(), path: PathBuf::new(), hotkey: None, volume: 1.0 }
+        Self {
+            id: 0,
+            name: String::new(),
+            path: PathBuf::new(),
+            hotkey: None,
+            volume: 1.0,
+        }
     }
 }
 
@@ -64,7 +70,11 @@ pub struct Volumes {
 
 impl Default for Volumes {
     fn default() -> Self {
-        Self { sounds: 1.0, mic: 1.0, monitor: 1.0 }
+        Self {
+            sounds: 1.0,
+            mic: 1.0,
+            monitor: 1.0,
+        }
     }
 }
 
@@ -93,7 +103,9 @@ impl LoadOutcome {
 
 /// `%APPDATA%\vSoundboard\config.json`
 pub fn config_path() -> PathBuf {
-    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let base = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
     base.join("vSoundboard").join("config.json")
 }
 
@@ -119,7 +131,10 @@ pub fn load(path: &Path) -> LoadOutcome {
                 // Couldn't move it aside; keep a copy rather than lose it.
                 let _ = std::fs::write(&backup, &bytes);
             }
-            LoadOutcome::RecoveredFromCorrupt { config: Config::default(), backup }
+            LoadOutcome::RecoveredFromCorrupt {
+                config: Config::default(),
+                backup,
+            }
         }
     }
 }
@@ -155,8 +170,17 @@ impl Config {
     pub fn add_pad(&mut self, path: PathBuf) -> u64 {
         let id = self.next_pad_id;
         self.next_pad_id += 1;
-        let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        self.pads.push(Pad { id, name, path, hotkey: None, volume: 1.0 });
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.pads.push(Pad {
+            id,
+            name,
+            path,
+            hotkey: None,
+            volume: 1.0,
+        });
         id
     }
 
@@ -209,7 +233,13 @@ mod tests {
             LoadOutcome::RecoveredFromCorrupt { config, backup } => {
                 assert_eq!(config, Config::default());
                 assert_eq!(std::fs::read_to_string(&backup).unwrap(), r#"{"pads": ["#);
-                assert!(backup.file_name().unwrap().to_string_lossy().starts_with("config.json.bad-"));
+                assert!(
+                    backup
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("config.json.bad-")
+                );
                 assert!(!path.exists());
             }
             other => panic!("expected RecoveredFromCorrupt, got {other:?}"),
