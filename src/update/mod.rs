@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use semver::Version;
 
+pub mod handoff;
 pub mod net;
 pub mod worker;
 
