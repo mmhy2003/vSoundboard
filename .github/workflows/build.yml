@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -47,7 +47,7 @@ jobs:
           & 'C:\InnoSetup7\ISCC.exe' installer\vsoundboard.iss
           if ($LASTEXITCODE -ne 0) { throw "iscc failed with $LASTEXITCODE" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: installer
           path: dist/vSoundboard-Setup-*.exe
