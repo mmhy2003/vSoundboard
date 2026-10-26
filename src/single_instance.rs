@@ -40,8 +40,10 @@ pub fn acquire(_name: &str) -> Option<InstanceGuard> {
 /// Bring the already-running instance's window to the front (it may be hidden in the tray).
 #[cfg(windows)]
 pub fn show_existing(title: &str) {
+    use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
+        FindWindowW, GetWindowRect, SW_RESTORE, SW_SHOW, SWP_NOSIZE, SWP_NOZORDER,
+        SetForegroundWindow, SetWindowPos, ShowWindow,
     };
     let title = wide(title);
     // SAFETY: FindWindowW takes a NUL-terminated title; the other calls accept any window handle.
@@ -50,6 +52,19 @@ pub fn show_existing(title: &str) {
         if !hwnd.is_null() {
             ShowWindow(hwnd, SW_SHOW);
             ShowWindow(hwnd, SW_RESTORE);
+            // A hidden start parks the window off-screen; bring it somewhere visible.
+            let mut r: RECT = std::mem::zeroed();
+            if GetWindowRect(hwnd, &mut r) != 0 && (r.left < -10_000 || r.top < -10_000) {
+                SetWindowPos(
+                    hwnd,
+                    std::ptr::null_mut(),
+                    160,
+                    120,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER,
+                );
+            }
             SetForegroundWindow(hwnd);
         }
     }

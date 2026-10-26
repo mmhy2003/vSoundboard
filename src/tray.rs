@@ -17,19 +17,9 @@ pub struct TrayRequests {
     pub quit: AtomicBool,
 }
 
-/// A 32×32 green disc, drawn in code so there's no asset file to ship.
 fn icon() -> Icon {
-    const N: u32 = 32;
-    let mut rgba = Vec::with_capacity((N * N * 4) as usize);
-    let c = (N as f32 - 1.0) / 2.0;
-    for y in 0..N {
-        for x in 0..N {
-            let d = ((x as f32 - c).powi(2) + (y as f32 - c).powi(2)).sqrt();
-            let alpha = ((c + 0.5 - d).clamp(0.0, 1.0) * 255.0) as u8;
-            rgba.extend_from_slice(&[46, 160, 100, alpha]);
-        }
-    }
-    Icon::from_rgba(rgba, N, N).expect("valid icon size")
+    Icon::from_rgba(crate::icon::icon_rgba(32).expect("32px icon"), 32, 32)
+        .expect("valid icon size")
 }
 
 /// Create the tray icon. Must run on the UI thread; keep the returned icon alive.
