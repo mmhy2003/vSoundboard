@@ -57,6 +57,10 @@ SolidCompression=yes
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[Messages]
+; Only shown when a restart is needed, which here means VB-Audio's setup was run.
+FinishedRestartLabel=VB-Cable usually appears only after a restart. If you installed VB-Cable, restart your PC before using vSoundboard in Discord.%n%nRestart now?
+
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 Name: "autostart"; Description: "Start vSoundboard when Windows starts (in the tray)"
@@ -222,11 +226,13 @@ begin
   Result := '"' + ExpandConstant('{app}\{#AppExe}') + '" --minimized';
 end;
 
-{ End a running vSoundboard (it may be hidden in the tray) and wait for it to go. }
-procedure CloseRunningApp(Quiet: Boolean);
+{ End a running vSoundboard (it may be hidden in the tray) and wait for it to go.
+  Returns False if it's still running afterwards. }
+function CloseRunningApp(Quiet: Boolean): Boolean;
 var
   ResultCode, Tries: Integer;
 begin
+  Result := True;
   if not CheckForMutexes(AppMutex) then
     Exit;
   if not Quiet then
@@ -237,15 +243,13 @@ begin
     Sleep(100);
     Tries := Tries + 1;
   end;
+  Result := not CheckForMutexes(AppMutex);
 end;
 
 { On upgrade, the autostart checkbox mirrors whether autostart is on right now, so an
   upgrade never undoes the in-app "Start with Windows" toggle. }
 procedure CurPageChanged(CurPageID: Integer);
 begin
-  if (CurPageID = wpFinished) and VbWasLaunched then
-    WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
-      'If you installed VB-Cable, restart your PC before using vSoundboard in Discord.';
   if (CurPageID = wpSelectTasks) and not TasksPageSeen then begin
     TasksPageSeen := True;
     if IsUpgrade then begin
@@ -269,8 +273,10 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  CloseRunningApp(WizardSilent);
-  Result := '';
+  if CloseRunningApp(WizardSilent) then
+    Result := ''
+  else
+    Result := 'vSoundboard couldn''t be closed. Quit it from its tray icon (right-click, Quit) and run Setup again.';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -287,14 +293,13 @@ begin
   end;
 end;
 
-function InitializeUninstall: Boolean;
-begin
-  CloseRunningApp(UninstallSilent);
-  Result := True;
-end;
-
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  { usAppMutexCheck comes after the "Are you sure?" question, so saying No leaves the app running. }
+  if (CurUninstallStep = usAppMutexCheck) and not CloseRunningApp(UninstallSilent) then
+    if not UninstallSilent then
+      MsgBox('vSoundboard couldn''t be closed. Quit it from its tray icon (right-click, Quit); ' +
+        'uninstall will continue but may leave its program file behind.', mbError, MB_OK);
   { Settings in %APPDATA%\vSoundboard are deliberately left alone. }
   if CurUninstallStep = usUninstall then
     RegDeleteValue(HKCU, RunKey, RunValue);
