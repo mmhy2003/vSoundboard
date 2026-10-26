@@ -70,7 +70,7 @@ fn main() -> eframe::Result {
         .with_min_inner_size([360.0, 300.0])
         .with_drag_and_drop(true)
         .with_icon(Arc::new(egui::IconData {
-            rgba: vsoundboard::icon::disc_rgba(64),
+            rgba: vsoundboard::icon::icon_rgba(64).expect("64px icon"),
             width: 64,
             height: 64,
         }));

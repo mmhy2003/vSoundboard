@@ -18,7 +18,8 @@ pub struct TrayRequests {
 }
 
 fn icon() -> Icon {
-    Icon::from_rgba(crate::icon::disc_rgba(32), 32, 32).expect("valid icon size")
+    Icon::from_rgba(crate::icon::icon_rgba(32).expect("32px icon"), 32, 32)
+        .expect("valid icon size")
 }
 
 /// Create the tray icon. Must run on the UI thread; keep the returned icon alive.

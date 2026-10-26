@@ -1,24 +1,28 @@
-//! Regenerates `assets/vsoundboard.ico` from `icon::disc_rgba`.
+//! Regenerates `assets/vsoundboard.ico` from `assets/logo.png`.
 //!
 //! cargo run --example make_icon
 
-use vsoundboard::icon::disc_rgba;
+use image::imageops::FilterType;
+use vsoundboard::icon::SIZES;
 
-const SIZES: [u32; 4] = [16, 32, 48, 256];
-
-fn png(size: u32) -> Vec<u8> {
+fn png(img: &image::RgbaImage, size: u32) -> Vec<u8> {
+    let scaled = image::imageops::resize(img, size, size, FilterType::Lanczos3);
     let mut out = Vec::new();
     let mut enc = png::Encoder::new(&mut out, size, size);
     enc.set_color(png::ColorType::Rgba);
     enc.set_depth(png::BitDepth::Eight);
     let mut w = enc.write_header().expect("png header");
-    w.write_image_data(&disc_rgba(size)).expect("png data");
+    w.write_image_data(scaled.as_raw()).expect("png data");
     drop(w);
     out
 }
 
 fn main() {
-    let images: Vec<Vec<u8>> = SIZES.iter().map(|&s| png(s)).collect();
+    let root = env!("CARGO_MANIFEST_DIR");
+    let logo = image::open(format!("{root}/assets/logo.png"))
+        .expect("read assets/logo.png")
+        .to_rgba8();
+    let images: Vec<Vec<u8>> = SIZES.iter().map(|&s| png(&logo, s)).collect();
     let mut ico = Vec::new();
     // ICONDIR: reserved, type 1 (icon), image count.
     ico.extend_from_slice(&[0, 0, 1, 0]);
@@ -37,7 +41,7 @@ fn main() {
     for data in &images {
         ico.extend_from_slice(data);
     }
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/vsoundboard.ico");
-    std::fs::write(path, &ico).expect("write icon");
+    let path = format!("{root}/assets/vsoundboard.ico");
+    std::fs::write(&path, &ico).expect("write icon");
     println!("wrote {path} ({} bytes)", ico.len());
 }
