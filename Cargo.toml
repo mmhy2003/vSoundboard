@@ -2,6 +2,9 @@
 name = "vsoundboard"
 version = "0.3.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/mmhy2003/vSoundboard"
+description = "A soundboard for Windows that plays sounds into your Discord calls"
 
 [dependencies]
 cpal = { version = "0.18.2", features = ["realtime"] }
