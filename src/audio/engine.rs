@@ -96,6 +96,8 @@ pub fn start(
         mic_underruns: mic_underruns.clone(),
         rig: None,
         current: None,
+        retry: RetryTimer::new(),
+        last_lists: None,
     };
     let thread = std::thread::Builder::new()
         .name("engine".into())
@@ -119,6 +121,36 @@ fn devices_to_build(names: &DeviceNames, planned: &DeviceStatus) -> [Option<Stri
         DeviceState::Missing => None,
         _ => selected(names, role).map(str::to_string),
     })
+}
+
+/// When to retry a device that failed to open: right away if the device list changed,
+/// otherwise after 5 s, then 10 s, 20 s, … up to a minute.
+#[derive(Debug)]
+struct RetryTimer {
+    next: Option<Instant>,
+    delay: Duration,
+}
+
+impl RetryTimer {
+    fn new() -> Self {
+        Self {
+            next: None,
+            delay: Duration::from_secs(5),
+        }
+    }
+
+    fn due(&self, now: Instant, list_changed: bool) -> bool {
+        list_changed || self.next.is_none_or(|t| now >= t)
+    }
+
+    fn failed(&mut self, now: Instant) {
+        self.next = Some(now + self.delay);
+        self.delay = (self.delay * 2).min(Duration::from_secs(60));
+    }
+
+    fn succeeded(&mut self) {
+        *self = Self::new();
+    }
 }
 
 /// How often device health is checked and the latency estimate refreshed.
@@ -154,6 +186,8 @@ impl Default for AtomicF32Cell {
 /// device change, which keeps the wiring between streams, rings and the player simple.
 struct Rig {
     player: Option<PlayerHandle>,
+    /// This rig's own player events, so a torn-down player's late events are dropped with it.
+    player_events: Receiver<PlayerEvent>,
     _streams: Vec<cpal::Stream>,
     lost: Vec<(Role, Arc<AtomicBool>)>,
     meters: Arc<Meters>,
@@ -182,32 +216,47 @@ struct Engine {
     rig: Option<Rig>,
     /// (pad, total) of what's playing.
     current: Option<(u64, Option<Duration>)>,
+    retry: RetryTimer,
+    /// Device lists seen at the last check, to notice plug/unplug.
+    last_lists: Option<(Vec<String>, Vec<String>)>,
 }
 
 impl Engine {
     fn run(mut self, rx: Receiver<EngineCommand>) {
-        let (player_tx, player_rx) = crossbeam_channel::unbounded();
-        self.supervise(&player_tx, true);
+        self.supervise(true);
         let mut last_supervise = Instant::now();
         loop {
+            let player_events = self
+                .rig
+                .as_ref()
+                .map_or_else(crossbeam_channel::never, |r| r.player_events.clone());
             crossbeam_channel::select! {
                 recv(rx) -> cmd => match cmd {
                     Ok(EngineCommand::Shutdown) | Err(_) => break,
-                    Ok(cmd) => self.handle(cmd, &player_tx),
+                    Ok(cmd) => self.handle(cmd),
                 },
-                recv(player_rx) -> ev => if let Ok(ev) = ev {
+                recv(player_events) -> ev => if let Ok(ev) = ev {
                     self.on_player_event(ev);
                 },
                 default(TICK) => {},
             }
             self.update_position();
             if last_supervise.elapsed() >= SUPERVISE_EVERY {
-                self.supervise(&player_tx, false);
+                self.supervise(false);
                 self.update_latency();
                 last_supervise = Instant::now();
             }
         }
+        self.teardown();
+    }
+
+    /// Drop every stream and the player, telling the UI if a sound was cut off.
+    fn teardown(&mut self) {
         self.rig = None;
+        if let Some((pad, _)) = self.current.take() {
+            self.update_position();
+            self.emit(EngineEvent::Player(PlayerEvent::Stopped { pad }));
+        }
     }
 
     fn emit(&self, ev: EngineEvent) {
@@ -219,7 +268,7 @@ impl Engine {
         self.rig.as_ref().and_then(|r| r.player.as_ref())
     }
 
-    fn handle(&mut self, cmd: EngineCommand, player_tx: &Sender<PlayerEvent>) {
+    fn handle(&mut self, cmd: EngineCommand) {
         match cmd {
             EngineCommand::PlayPad(id) => {
                 if let (Some((path, gain)), Some(player)) = (self.pads.get(&id), self.player()) {
@@ -250,9 +299,10 @@ impl Engine {
             }
             EngineCommand::SetDevices(names) => {
                 self.names = names;
-                self.rig = None;
+                self.teardown();
+                self.retry.succeeded();
                 self.set_status(DeviceStatus::default());
-                self.supervise(player_tx, true);
+                self.supervise(true);
             }
             EngineCommand::Shutdown => {}
         }
@@ -317,7 +367,7 @@ impl Engine {
     }
 
     /// Check device health; rebuild everything if anything needs (re)opening or went missing.
-    fn supervise(&mut self, player_tx: &Sender<PlayerEvent>, force: bool) {
+    fn supervise(&mut self, force: bool) {
         let lost: Vec<Role> = self
             .rig
             .as_ref()
@@ -332,7 +382,19 @@ impl Engine {
         let inputs = list_inputs();
         let outputs = list_outputs();
         let current = self.status.lock().unwrap().clone();
-        let (to_open, planned) = plan_reconnect(&self.names, &inputs, &outputs, &current, &lost);
+        let now = Instant::now();
+        let lists = Some((inputs.clone(), outputs.clone()));
+        let list_changed = self.last_lists != lists;
+        self.last_lists = lists;
+        let retry_failed = force || self.retry.due(now, list_changed);
+        let (to_open, planned) = plan_reconnect(
+            &self.names,
+            &inputs,
+            &outputs,
+            &current,
+            &lost,
+            retry_failed,
+        );
         let went_away = ROLES
             .iter()
             .any(|&r| *current.get(r) == DeviceState::Open && *planned.get(r) != DeviceState::Open);
@@ -340,18 +402,22 @@ impl Engine {
             return;
         }
         // Rebuild every present device, not just the ones that changed.
-        self.rig = None;
-        self.current = None;
-        let (rig, status) = self.build(&planned, player_tx);
+        self.teardown();
+        let (rig, status) = self.build(&planned);
         self.rig = Some(rig);
+        if ROLES
+            .iter()
+            .any(|&r| matches!(status.get(r), DeviceState::Failed(_)))
+        {
+            self.retry.failed(now);
+        } else {
+            self.retry.succeeded();
+        }
         self.set_status(status);
     }
 
-    fn build(
-        &self,
-        planned: &DeviceStatus,
-        player_tx: &Sender<PlayerEvent>,
-    ) -> (Rig, DeviceStatus) {
+    fn build(&self, planned: &DeviceStatus) -> (Rig, DeviceStatus) {
+        let (player_tx, player_events) = crossbeam_channel::unbounded();
         let mut status = planned.clone();
         let [mic, cable, monitor] = devices_to_build(&self.names, planned);
 
@@ -382,7 +448,7 @@ impl Engine {
             spawn_player(
                 [cable_rate.unwrap_or(48_000), monitor_rate.unwrap_or(48_000)],
                 self.params.clone(),
-                player_tx.clone(),
+                player_tx,
             )
         });
         let (player, feeds) = match player {
@@ -509,6 +575,7 @@ impl Engine {
 
         let rig = Rig {
             player,
+            player_events,
             _streams: streams,
             lost,
             meters,
@@ -523,6 +590,66 @@ impl Engine {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn retry_backs_off_and_resets() {
+        let t0 = Instant::now();
+        let mut r = RetryTimer::new();
+        assert!(r.due(t0, false));
+        r.failed(t0);
+        assert!(!r.due(t0 + Duration::from_secs(1), false));
+        assert!(
+            r.due(t0 + Duration::from_secs(1), true),
+            "a changed device list retries at once"
+        );
+        assert!(r.due(t0 + Duration::from_secs(5), false));
+        r.failed(t0 + Duration::from_secs(5));
+        assert!(!r.due(t0 + Duration::from_secs(14), false));
+        assert!(r.due(t0 + Duration::from_secs(15), false));
+        for _ in 0..10 {
+            r.failed(t0);
+        }
+        assert!(
+            r.due(t0 + Duration::from_secs(60), false),
+            "capped at a minute"
+        );
+        r.succeeded();
+        assert!(r.due(t0, false));
+    }
+
+    fn bare_engine() -> (Engine, Receiver<EngineEvent>) {
+        let (events, rx) = crossbeam_channel::unbounded();
+        let engine = Engine {
+            names: DeviceNames::default(),
+            pads: HashMap::new(),
+            params: Arc::new(SharedParams::default()),
+            events,
+            on_event: Arc::new(|| {}),
+            status: Arc::default(),
+            position: Arc::default(),
+            mic_latency: Arc::default(),
+            mic_underruns: Arc::default(),
+            rig: None,
+            current: None,
+            retry: RetryTimer::new(),
+            last_lists: None,
+        };
+        (engine, rx)
+    }
+
+    #[test]
+    fn teardown_reports_the_interrupted_sound() {
+        let (mut engine, rx) = bare_engine();
+        engine.current = Some((5, None));
+        engine.teardown();
+        assert_eq!(
+            rx.try_recv().ok(),
+            Some(EngineEvent::Player(PlayerEvent::Stopped { pad: 5 }))
+        );
+        assert!(engine.current.is_none());
+        engine.teardown();
+        assert!(rx.try_recv().is_err(), "nothing to report when idle");
+    }
 
     #[test]
     fn first_open_uses_selected_devices() {

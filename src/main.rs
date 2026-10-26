@@ -5,6 +5,7 @@ use std::sync::Arc;
 use eframe::egui;
 use vsoundboard::audio::{SharedParams, devices, engine};
 use vsoundboard::config::{self, LoadOutcome};
+use vsoundboard::single_instance;
 use vsoundboard::ui::{self, SoundboardApp};
 
 /// egui's built-in fonts lack Arabic and many symbols; fall back to Windows' own fonts.
@@ -25,6 +26,10 @@ fn add_system_fonts(ctx: &egui::Context) {
 }
 
 fn main() -> eframe::Result {
+    let Some(_instance) = single_instance::acquire("vSoundboard") else {
+        single_instance::show_existing("vSoundboard");
+        return Ok(());
+    };
     let path = config::config_path();
     let outcome = config::load(&path);
     let notice = match &outcome {
@@ -32,15 +37,21 @@ fn main() -> eframe::Result {
             "Your settings file was damaged, so vSoundboard started fresh. The old file was kept as {}.",
             backup.display()
         )),
+        LoadOutcome::Unreadable { error, .. } => Some(format!(
+            "Couldn't read your settings ({error}). Changes won't be saved this time; restart vSoundboard to try again."
+        )),
         _ => None,
     };
+    let read_only = matches!(outcome, LoadOutcome::Unreadable { .. });
     let mut cfg = outcome.into_config();
-    if ui::first_run_defaults(
-        &mut cfg,
-        &devices::list_outputs(),
-        devices::default_input_name(),
-        devices::default_output_name(),
-    ) {
+    if !read_only
+        && ui::first_run_defaults(
+            &mut cfg,
+            &devices::list_outputs(),
+            devices::default_input_name(),
+            devices::default_output_name(),
+        )
+    {
         let _ = config::save(&path, &cfg);
     }
 
@@ -67,6 +78,7 @@ fn main() -> eframe::Result {
             );
             let mut app = SoundboardApp::new(cfg, path, eng);
             app.notice = notice;
+            app.read_only = read_only;
             app.check_files();
             app.enable_hotkeys();
             app.enable_tray(&cc.egui_ctx);

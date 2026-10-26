@@ -63,7 +63,8 @@ impl SoundReader {
             .map_err(|_| unreadable("unsupported codec"))?;
         let sample_rate = params
             .sample_rate
-            .ok_or_else(|| unreadable("unknown sample rate"))?;
+            .filter(|r| (1_000..=768_000).contains(r))
+            .ok_or_else(|| unreadable("unsupported sample rate"))?;
         let track_id = track.id;
         let num_frames = track.num_frames;
         Ok(Self {
@@ -415,5 +416,29 @@ mod tests {
             let frames = read_all(&mut SoundReader::open(&p).unwrap());
             assert!(!frames.is_empty(), "{name}");
         }
+    }
+
+    #[test]
+    fn zero_sample_rate_is_error() {
+        // A hand-built WAV whose fmt chunk claims 0 Hz.
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36u32 + 8).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        b.extend_from_slice(&2u16.to_le_bytes()); // channels
+        b.extend_from_slice(&0u32.to_le_bytes()); // sample rate
+        b.extend_from_slice(&0u32.to_le_bytes()); // byte rate
+        b.extend_from_slice(&4u16.to_le_bytes()); // block align
+        b.extend_from_slice(&16u16.to_le_bytes()); // bits
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&8u32.to_le_bytes());
+        b.extend_from_slice(&[0u8; 8]);
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("zero.wav");
+        std::fs::write(&p, b).unwrap();
+        let err = SoundReader::open(&p).err().expect("0 Hz must not open");
+        assert!(err.starts_with("Can't read this file"), "{err}");
     }
 }

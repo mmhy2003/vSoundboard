@@ -46,6 +46,8 @@ pub struct SoundboardApp {
     pub tray: Option<tray_icon::TrayIcon>,
     pub tray_requests: Arc<TrayRequests>,
     quitting: bool,
+    /// Set when the settings file couldn't be read; nothing is saved so it isn't overwritten.
+    pub read_only: bool,
 }
 
 /// The pad table the engine needs: (id, file, volume).
@@ -91,6 +93,7 @@ impl SoundboardApp {
             tray: None,
             tray_requests: Arc::default(),
             quitting: false,
+            read_only: false,
         }
     }
 
@@ -134,6 +137,13 @@ impl SoundboardApp {
         }
     }
 
+    /// The window lost focus or is hiding: an open capture would leave every shortcut off.
+    pub fn window_focus_lost(&mut self) {
+        if self.capture.take().is_some() {
+            self.sync_hotkeys();
+        }
+    }
+
     pub fn start_capture(&mut self, target: HotkeyAction) {
         self.suspend_hotkeys();
         self.capture = Some(Capture::new(target));
@@ -151,7 +161,9 @@ impl SoundboardApp {
 
     /// Save the config and give the engine the current pad table.
     pub fn persist(&mut self) {
-        if let Err(e) = config::save(&self.config_path, &self.config) {
+        if self.read_only {
+            // Leave the unreadable file alone; the engine still gets the pads.
+        } else if let Err(e) = config::save(&self.config_path, &self.config) {
             self.notice = Some(format!("Couldn't save settings: {e}"));
         }
         self.engine
@@ -258,6 +270,11 @@ impl eframe::App for SoundboardApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        let (close, focused) =
+            ctx.input(|i| (i.viewport().close_requested(), i.viewport().focused));
+        if self.capture.is_some() && (close || focused == Some(false)) {
+            self.window_focus_lost();
+        }
         // With a tray icon, the close button hides the window and shortcuts keep working.
         if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() && !self.quitting {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -361,5 +378,23 @@ mod tests {
         app.play(id);
         let err = app.pad_errors.get(&id).unwrap();
         assert!(err.starts_with("File not found"), "{err}");
+    }
+
+    #[test]
+    fn focus_loss_cancels_capture() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.start_capture(HotkeyAction::Stop);
+        app.window_focus_lost();
+        assert!(app.capture.is_none());
+    }
+
+    #[test]
+    fn read_only_app_never_saves() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.read_only = true;
+        app.add_files(vec![d.path().join("a.wav")]);
+        assert!(!app.config_path.exists());
     }
 }

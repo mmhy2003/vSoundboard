@@ -34,10 +34,16 @@ fn slot(cfg: &mut Config, target: HotkeyAction) -> Option<&mut Option<String>> {
 
 /// Store `cap.pending` as the target's shortcut, or explain why it can't be used.
 pub fn apply_capture(cfg: &mut Config, cap: &Capture) -> Result<(), String> {
-    if let Some(hk) = cap.pending
-        && let Some(other) = hotkeys::find_conflict(cfg, hk, cap.target)
-    {
-        return Err(hotkeys::conflict_message(cfg, hk, other));
+    if let Some(hk) = cap.pending {
+        if hotkeys::needs_modifier(hk) {
+            return Err(format!(
+                "Add Ctrl or Alt: on its own, {} would stop working for typing everywhere.",
+                hotkeys::label(hk)
+            ));
+        }
+        if let Some(other) = hotkeys::find_conflict(cfg, hk, cap.target) {
+            return Err(hotkeys::conflict_message(cfg, hk, other));
+        }
     }
     let value = cap.pending.map(hotkeys::to_config_string);
     match slot(cfg, cap.target) {
@@ -92,9 +98,11 @@ pub fn show(app: &mut SoundboardApp, ctx: &egui::Context) {
             {
                 if *key == egui::Key::Escape {
                     outcome = Outcome::Cancel;
-                } else if let Some(hk) =
-                    hotkeys::from_egui(physical_key.unwrap_or(*key), *modifiers)
-                {
+                } else if let Some(hk) = hotkeys::from_egui(
+                    physical_key.unwrap_or(*key),
+                    *modifiers,
+                    hotkeys::numpad_held(*key),
+                ) {
                     outcome = Outcome::Save(Some(hk));
                 }
             }
@@ -234,5 +242,26 @@ mod tests {
         c.pad_mut(1).unwrap().hotkey = Some("control+Digit1".into());
         apply_capture(&mut c, &Capture::new(HotkeyAction::PlayPad(1))).unwrap();
         assert_eq!(c.pad(1).unwrap().hotkey, None);
+    }
+
+    #[test]
+    fn rejects_bare_typing_key() {
+        let mut c = cfg();
+        let cap = Capture {
+            pending: Some(HotKey::new(None, Code::KeyA)),
+            ..Capture::new(HotkeyAction::PlayPad(1))
+        };
+        assert_eq!(
+            apply_capture(&mut c, &cap),
+            Err(
+                "Add Ctrl or Alt: on its own, A would stop working for typing everywhere."
+                    .to_string()
+            )
+        );
+        let cap = Capture {
+            pending: Some(HotKey::new(None, Code::Numpad1)),
+            ..Capture::new(HotkeyAction::PlayPad(1))
+        };
+        apply_capture(&mut c, &cap).unwrap();
     }
 }

@@ -89,7 +89,15 @@ pub enum RoutingMode {
 pub enum LoadOutcome {
     Fresh(Config),
     Loaded(Config),
-    RecoveredFromCorrupt { config: Config, backup: PathBuf },
+    RecoveredFromCorrupt {
+        config: Config,
+        backup: PathBuf,
+    },
+    /// The file exists but couldn't be read (locked, no permission). Never save over it.
+    Unreadable {
+        config: Config,
+        error: String,
+    },
 }
 
 impl LoadOutcome {
@@ -97,6 +105,7 @@ impl LoadOutcome {
         match self {
             LoadOutcome::Fresh(c) | LoadOutcome::Loaded(c) => c,
             LoadOutcome::RecoveredFromCorrupt { config, .. } => config,
+            LoadOutcome::Unreadable { config, .. } => config,
         }
     }
 }
@@ -112,7 +121,15 @@ pub fn config_path() -> PathBuf {
 pub fn load(path: &Path) -> LoadOutcome {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(_) => return LoadOutcome::Fresh(Config::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return LoadOutcome::Fresh(Config::default());
+        }
+        Err(e) => {
+            return LoadOutcome::Unreadable {
+                config: Config::default(),
+                error: e.to_string(),
+            };
+        }
     };
     match serde_json::from_slice::<Config>(&bytes) {
         Ok(mut cfg) => {
@@ -314,5 +331,17 @@ mod tests {
         let path = d.path().join("vSoundboard").join("config.json");
         save(&path, &Config::default()).unwrap();
         assert!(path.exists());
+    }
+
+    #[test]
+    fn unreadable_file_is_not_fresh() {
+        // A directory where the file should be: reading fails, but not with NotFound.
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("config.json");
+        std::fs::create_dir(&path).unwrap();
+        match load(&path) {
+            LoadOutcome::Unreadable { config, .. } => assert_eq!(config, Config::default()),
+            other => panic!("expected Unreadable, got {other:?}"),
+        }
     }
 }

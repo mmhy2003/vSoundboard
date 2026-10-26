@@ -101,6 +101,7 @@ pub fn plan_reconnect(
     outputs: &[String],
     status: &DeviceStatus,
     lost: &[Role],
+    retry_failed: bool,
 ) -> (Vec<Role>, DeviceStatus) {
     let mut to_open = Vec::new();
     let mut next = status.clone();
@@ -115,6 +116,7 @@ pub fn plan_reconnect(
         match (present, status.get(role)) {
             (false, _) => next.set(role, DeviceState::Missing),
             (true, DeviceState::Open) if !was_lost => {}
+            (true, DeviceState::Failed(_)) if !was_lost && !retry_failed => {}
             (true, _) => to_open.push(role),
         }
     }
@@ -276,6 +278,7 @@ mod tests {
             &[],
             &DeviceStatus::default(),
             &[],
+            true,
         );
         assert_eq!(st.mic, DeviceState::Missing);
         assert!(!open.contains(&Role::Mic));
@@ -289,6 +292,7 @@ mod tests {
             &s(&["CABLE Input", "Headphones"]),
             &DeviceStatus::default(),
             &[],
+            true,
         );
         assert_eq!(open, vec![Role::Mic, Role::Cable, Role::Monitor]);
     }
@@ -305,6 +309,7 @@ mod tests {
             &[],
             &status,
             &[],
+            true,
         );
         assert_eq!(open, vec![Role::Mic]);
     }
@@ -321,8 +326,27 @@ mod tests {
             &s(&["CABLE Input"]),
             &status,
             &[],
+            true,
         );
         assert_eq!(open, vec![Role::Cable]);
+    }
+
+    #[test]
+    fn failed_waits_for_retry_permission() {
+        let status = DeviceStatus {
+            cable: DeviceState::Failed("busy".into()),
+            ..Default::default()
+        };
+        let (open, st) = plan_reconnect(
+            &names(None, Some("CABLE Input"), None),
+            &[],
+            &s(&["CABLE Input"]),
+            &status,
+            &[],
+            false,
+        );
+        assert!(open.is_empty());
+        assert_eq!(st.cable, DeviceState::Failed("busy".into()));
     }
 
     #[test]
@@ -332,10 +356,18 @@ mod tests {
             ..Default::default()
         };
         let sel = names(None, Some("CABLE Input"), None);
-        let (open, _) = plan_reconnect(&sel, &[], &s(&["CABLE Input"]), &status, &[Role::Cable]);
+        let (open, _) = plan_reconnect(
+            &sel,
+            &[],
+            &s(&["CABLE Input"]),
+            &status,
+            &[Role::Cable],
+            true,
+        );
         assert_eq!(open, vec![Role::Cable]);
 
-        let (open, st) = plan_reconnect(&sel, &[], &s(&["Speakers"]), &status, &[Role::Cable]);
+        let (open, st) =
+            plan_reconnect(&sel, &[], &s(&["Speakers"]), &status, &[Role::Cable], true);
         assert!(open.is_empty());
         assert_eq!(st.cable, DeviceState::Missing);
     }
@@ -352,6 +384,7 @@ mod tests {
             &s(&["Headphones"]),
             &status,
             &[],
+            true,
         );
         assert!(open.is_empty());
         assert_eq!(st.monitor, DeviceState::NotSelected);
@@ -369,6 +402,7 @@ mod tests {
             &[],
             &status,
             &[],
+            true,
         );
         assert!(open.is_empty());
         assert_eq!(st.mic, DeviceState::Open);

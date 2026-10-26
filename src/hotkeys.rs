@@ -125,8 +125,138 @@ pub fn conflict_message(cfg: &Config, hk: HotKey, other: HotkeyAction) -> String
     format!("{} is already used by {owner}.", label(hk))
 }
 
+/// Typing keys (letters, top-row digits, punctuation, Space, Enter, Tab, Backspace) that would
+/// stop working everywhere if bound on their own.
+pub fn needs_modifier(hk: HotKey) -> bool {
+    let typing = matches!(
+        hk.key,
+        Code::KeyA
+            | Code::KeyB
+            | Code::KeyC
+            | Code::KeyD
+            | Code::KeyE
+            | Code::KeyF
+            | Code::KeyG
+            | Code::KeyH
+            | Code::KeyI
+            | Code::KeyJ
+            | Code::KeyK
+            | Code::KeyL
+            | Code::KeyM
+            | Code::KeyN
+            | Code::KeyO
+            | Code::KeyP
+            | Code::KeyQ
+            | Code::KeyR
+            | Code::KeyS
+            | Code::KeyT
+            | Code::KeyU
+            | Code::KeyV
+            | Code::KeyW
+            | Code::KeyX
+            | Code::KeyY
+            | Code::KeyZ
+            | Code::Digit0
+            | Code::Digit1
+            | Code::Digit2
+            | Code::Digit3
+            | Code::Digit4
+            | Code::Digit5
+            | Code::Digit6
+            | Code::Digit7
+            | Code::Digit8
+            | Code::Digit9
+            | Code::Space
+            | Code::Enter
+            | Code::Tab
+            | Code::Backspace
+            | Code::Minus
+            | Code::Equal
+            | Code::Comma
+            | Code::Period
+            | Code::Slash
+            | Code::Backslash
+            | Code::Semicolon
+            | Code::Quote
+            | Code::Backquote
+            | Code::BracketLeft
+            | Code::BracketRight
+    );
+    typing
+        && !hk
+            .mods
+            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::META)
+}
+
+/// Whether `key` (as egui reported it) is currently held on the numeric keypad.
+#[cfg(windows)]
+pub fn numpad_held(key: egui::Key) -> bool {
+    use egui::Key as N;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+    let vk = match key {
+        N::Num0 => VK_NUMPAD0,
+        N::Num1 => VK_NUMPAD1,
+        N::Num2 => VK_NUMPAD2,
+        N::Num3 => VK_NUMPAD3,
+        N::Num4 => VK_NUMPAD4,
+        N::Num5 => VK_NUMPAD5,
+        N::Num6 => VK_NUMPAD6,
+        N::Num7 => VK_NUMPAD7,
+        N::Num8 => VK_NUMPAD8,
+        N::Num9 => VK_NUMPAD9,
+        N::Plus => VK_ADD,
+        N::Minus => VK_SUBTRACT,
+        N::Slash => VK_DIVIDE,
+        N::Period => VK_DECIMAL,
+        _ => return false,
+    };
+    // SAFETY: GetAsyncKeyState only reads global keyboard state.
+    (unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000) != 0
+}
+
+#[cfg(not(windows))]
+pub fn numpad_held(_key: egui::Key) -> bool {
+    false
+}
+
+fn egui_mods(mods: egui::Modifiers) -> Modifiers {
+    let mut m = Modifiers::empty();
+    if mods.ctrl {
+        m |= Modifiers::CONTROL;
+    }
+    if mods.shift {
+        m |= Modifiers::SHIFT;
+    }
+    if mods.alt {
+        m |= Modifiers::ALT;
+    }
+    m
+}
+
 /// Map a key press captured by egui to a global hotkey; None for keys Windows hotkeys can't use.
-pub fn from_egui(key: egui::Key, mods: egui::Modifiers) -> Option<HotKey> {
+/// `numpad` says whether the key came from the numeric keypad (egui can't tell).
+pub fn from_egui(key: egui::Key, mods: egui::Modifiers, numpad: bool) -> Option<HotKey> {
+    use egui::Key as N;
+    let pad = match key {
+        N::Num0 => Some(Code::Numpad0),
+        N::Num1 => Some(Code::Numpad1),
+        N::Num2 => Some(Code::Numpad2),
+        N::Num3 => Some(Code::Numpad3),
+        N::Num4 => Some(Code::Numpad4),
+        N::Num5 => Some(Code::Numpad5),
+        N::Num6 => Some(Code::Numpad6),
+        N::Num7 => Some(Code::Numpad7),
+        N::Num8 => Some(Code::Numpad8),
+        N::Num9 => Some(Code::Numpad9),
+        N::Plus => Some(Code::NumpadAdd),
+        N::Minus => Some(Code::NumpadSubtract),
+        N::Slash => Some(Code::NumpadDivide),
+        N::Period => Some(Code::NumpadDecimal),
+        _ => None,
+    };
+    if numpad && let Some(code) = pad {
+        return Some(HotKey::new(Some(egui_mods(mods)), code));
+    }
     use egui::Key as K;
     let code = match key {
         K::A => Code::KeyA,
@@ -224,17 +354,7 @@ pub fn from_egui(key: egui::Key, mods: egui::Modifiers) -> Option<HotKey> {
         K::MediaTrackPrevious => Code::MediaTrackPrevious,
         _ => return None,
     };
-    let mut m = Modifiers::empty();
-    if mods.ctrl {
-        m |= Modifiers::CONTROL;
-    }
-    if mods.shift {
-        m |= Modifiers::SHIFT;
-    }
-    if mods.alt {
-        m |= Modifiers::ALT;
-    }
-    Some(HotKey::new(Some(m), code))
+    Some(HotKey::new(Some(egui_mods(mods)), code))
 }
 
 /// Registers shortcuts with Windows and sends their actions straight to the engine, so they
@@ -423,20 +543,27 @@ mod tests {
     #[test]
     fn from_egui_maps() {
         assert_eq!(
-            from_egui(egui::Key::Num1, egui::Modifiers::CTRL),
+            from_egui(egui::Key::Num1, egui::Modifiers::CTRL, false),
             Some(hk(Some(Modifiers::CONTROL), Code::Digit1))
         );
         assert_eq!(
-            from_egui(egui::Key::F9, egui::Modifiers::NONE),
+            from_egui(egui::Key::F9, egui::Modifiers::NONE, false),
             Some(hk(None, Code::F9))
         );
         assert_eq!(
-            from_egui(egui::Key::A, egui::Modifiers::SHIFT | egui::Modifiers::ALT),
+            from_egui(
+                egui::Key::A,
+                egui::Modifiers::SHIFT | egui::Modifiers::ALT,
+                false
+            ),
             Some(hk(Some(Modifiers::SHIFT | Modifiers::ALT), Code::KeyA))
         );
-        assert_eq!(from_egui(egui::Key::Copy, egui::Modifiers::NONE), None);
         assert_eq!(
-            from_egui(egui::Key::ControlLeft, egui::Modifiers::CTRL),
+            from_egui(egui::Key::Copy, egui::Modifiers::NONE, false),
+            None
+        );
+        assert_eq!(
+            from_egui(egui::Key::ControlLeft, egui::Modifiers::CTRL, false),
             None
         );
     }
@@ -481,5 +608,49 @@ mod tests {
         first.suspend();
         assert!(second.sync(&cfg).is_empty());
         second.suspend();
+    }
+
+    #[test]
+    fn from_egui_numpad_keys() {
+        assert_eq!(
+            from_egui(egui::Key::Num1, egui::Modifiers::CTRL, true),
+            Some(hk(Some(Modifiers::CONTROL), Code::Numpad1))
+        );
+        assert_eq!(
+            from_egui(egui::Key::Num0, egui::Modifiers::NONE, true),
+            Some(hk(None, Code::Numpad0))
+        );
+        assert_eq!(
+            from_egui(egui::Key::Plus, egui::Modifiers::NONE, true),
+            Some(hk(None, Code::NumpadAdd))
+        );
+        assert_eq!(
+            from_egui(egui::Key::Minus, egui::Modifiers::NONE, true),
+            Some(hk(None, Code::NumpadSubtract))
+        );
+        assert_eq!(
+            from_egui(egui::Key::Slash, egui::Modifiers::NONE, true),
+            Some(hk(None, Code::NumpadDivide))
+        );
+        assert_eq!(
+            from_egui(egui::Key::Period, egui::Modifiers::NONE, true),
+            Some(hk(None, Code::NumpadDecimal))
+        );
+    }
+
+    #[test]
+    fn bare_typing_keys_need_a_modifier() {
+        assert!(needs_modifier(hk(None, Code::KeyA)));
+        assert!(needs_modifier(hk(None, Code::Digit1)));
+        assert!(needs_modifier(hk(None, Code::Enter)));
+        assert!(needs_modifier(hk(None, Code::Space)));
+        assert!(
+            needs_modifier(hk(Some(Modifiers::SHIFT), Code::KeyA)),
+            "Shift+A types a capital A"
+        );
+        assert!(!needs_modifier(hk(Some(Modifiers::CONTROL), Code::KeyA)));
+        assert!(!needs_modifier(hk(None, Code::F9)));
+        assert!(!needs_modifier(hk(None, Code::Numpad5)));
+        assert!(!needs_modifier(hk(None, Code::Insert)));
     }
 }
