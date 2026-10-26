@@ -1,3 +1,4 @@
+pub mod decode;
 pub mod drift;
 pub mod mix;
 pub mod shared;
