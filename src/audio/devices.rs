@@ -120,6 +120,20 @@ fn find_device(name: &str, input: bool) -> Result<cpal::Device, String> {
         .ok_or_else(|| "Not found".to_string())
 }
 
+/// The named input device's default sample rate.
+pub fn input_rate(name: &str) -> Result<u32, String> {
+    let device = find_device(name, true)?;
+    let config = device.default_input_config().map_err(|e| e.to_string())?;
+    Ok(config.sample_rate())
+}
+
+/// The named output device's default sample rate.
+pub fn output_rate(name: &str) -> Result<u32, String> {
+    let device = find_device(name, false)?;
+    let config = device.default_output_config().map_err(|e| e.to_string())?;
+    Ok(config.sample_rate())
+}
+
 /// Stream errors that mean the device is gone or the stream is dead; xruns are survivable.
 fn error_handler(lost: Arc<AtomicBool>) -> impl FnMut(cpal::Error) + Send + 'static {
     move |e| {

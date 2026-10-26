@@ -1,6 +1,7 @@
 pub mod decode;
 pub mod devices;
 pub mod drift;
+pub mod engine;
 pub mod mix;
 pub mod player;
 pub mod shared;
