@@ -5,6 +5,8 @@ mod settings;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use eframe::egui;
@@ -13,6 +15,7 @@ use crate::audio::engine::{EngineCommand, EngineEvent, EngineHandle};
 use crate::audio::player::PlayerEvent;
 use crate::config::{self, Config, RoutingMode};
 use crate::hotkeys::{HotkeyAction, HotkeyRegistry};
+use crate::tray::{self, TrayRequests};
 
 pub use capture::Capture;
 pub use settings::first_run_defaults;
@@ -39,6 +42,10 @@ pub struct SoundboardApp {
     pub hotkeys: Option<HotkeyRegistry>,
     /// (inputs, outputs) shown on the settings screen; refreshed each time it opens.
     pub device_lists: Option<(Vec<String>, Vec<String>)>,
+    /// Keeps the tray icon alive; while it exists, closing the window hides it instead.
+    pub tray: Option<tray_icon::TrayIcon>,
+    pub tray_requests: Arc<TrayRequests>,
+    quitting: bool,
 }
 
 /// The pad table the engine needs: (id, file, volume).
@@ -81,6 +88,21 @@ impl SoundboardApp {
             renaming: None,
             hotkeys: None,
             device_lists: None,
+            tray: None,
+            tray_requests: Arc::default(),
+            quitting: false,
+        }
+    }
+
+    /// Install the tray icon; call on the UI thread.
+    pub fn enable_tray(&mut self, ctx: &egui::Context) {
+        match tray::install(
+            ctx.clone(),
+            self.engine.tx.clone(),
+            self.tray_requests.clone(),
+        ) {
+            Ok(icon) => self.tray = Some(icon),
+            Err(e) => self.notice = Some(format!("Couldn't add the tray icon: {e}")),
         }
     }
 
@@ -223,8 +245,24 @@ impl SoundboardApp {
 }
 
 impl eframe::App for SoundboardApp {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
+
+        if self.tray_requests.show.swap(false, Ordering::Relaxed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if self.tray_requests.quit.swap(false, Ordering::Relaxed) {
+            self.quitting = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        // With a tray icon, the close button hides the window and shortcuts keep working.
+        if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() && !self.quitting {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

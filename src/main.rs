@@ -69,6 +69,7 @@ fn main() -> eframe::Result {
             app.notice = notice;
             app.check_files();
             app.enable_hotkeys();
+            app.enable_tray(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
     )
