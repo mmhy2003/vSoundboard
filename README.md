@@ -13,9 +13,21 @@ Current sound ─┤
 
 Windows doesn't let an ordinary app create a microphone, so vSoundboard uses the free **VB-Cable** virtual audio cable as Discord's mic.
 
+## Install
+
+1. Download `vSoundboard-Setup-X.Y.Z.exe` from the [Releases page](https://github.com/mmhy2003/vSoundboard/releases).
+2. Run it. The installer isn't code-signed, so Windows may show "Windows protected your PC". Click **More info → Run anyway**.
+3. Choose your options:
+   - **Desktop shortcut.**
+   - **Start vSoundboard when Windows starts.** It starts hidden in the tray; you can change this later under ⚙ Devices.
+   - **Download and install VB-Cable**, offered only if it's missing. The installer fetches VB-Audio's official package and runs their setup, which asks for administrator permission. VB-CABLE is made by VB-Audio (https://vb-cable.com) and is donationware: free to use, and you can support VB-Audio at vb-cable.com.
+4. If you installed VB-Cable, **restart your PC** before using vSoundboard in Discord.
+
+It installs just for your user (no administrator rights needed for vSoundboard itself). Uninstalling from Windows' Apps settings keeps your sounds and shortcuts, and leaves VB-Cable installed.
+
 ## Setup
 
-1. **Install VB-Cable** (free) from https://vb-audio.com/Cable/ and restart your PC.
+1. **VB-Cable:** if you didn't install it with the installer, get it free from https://vb-audio.com/Cable/ and restart your PC.
 2. **Start vSoundboard** and click **⚙ Devices**:
    - **Microphone:** your real mic.
    - **Virtual mic (to Discord):** "CABLE Input (VB-Audio Virtual Cable)". This is picked automatically when VB-Cable is installed.
@@ -46,9 +58,10 @@ Everything is saved automatically to `%APPDATA%\vSoundboard\config.json`. If tha
 
 ## Building
 
-Requires Rust (MSVC toolchain) and the Visual Studio C++ Build Tools.
+Requires Rust (MSVC toolchain) and the Visual Studio C++ Build Tools. The installer also needs [Inno Setup 7](https://jrsoftware.org/isinfo.php), with `iscc` on PATH, and GNU Make.
 
 ```
+make installer             # dist\vSoundboard-Setup-<version>.exe
 cargo build --release      # target\release\vsoundboard.exe
 cargo test
 cargo run --example smoke  # plays a test tone through VB-Cable and reports what arrived
