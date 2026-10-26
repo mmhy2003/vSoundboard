@@ -64,6 +64,8 @@ pub struct SoundboardApp {
     pub handoff: Option<update_dialog::Handoff>,
     /// A link shown next to the notice (e.g. the manual download page).
     pub notice_link: Option<String>,
+    /// Last frame the download progress was on screen (decides whether to install right away).
+    pub download_watched: Option<std::time::Instant>,
 }
 
 /// The pad table the engine needs: (id, file, volume).
@@ -117,6 +119,7 @@ impl SoundboardApp {
             can_install: false,
             handoff: None,
             notice_link: None,
+            download_watched: None,
         }
     }
 

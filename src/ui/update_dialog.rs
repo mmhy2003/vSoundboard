@@ -2,7 +2,7 @@
 //! except right after the friend clicked "Check for updates".
 
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use semver::Version;
@@ -33,9 +33,8 @@ pub fn dialog_should_show(
         UpdateState::Available { manual: false, .. } => {
             focused && should_prompt(now, snoozed_until, false)
         }
-        UpdateState::Downloading { .. }
-        | UpdateState::Ready { .. }
-        | UpdateState::DownloadFailed { .. } => true,
+        UpdateState::Ready { .. } => focused,
+        UpdateState::Downloading { .. } | UpdateState::DownloadFailed { .. } => true,
         _ => false,
     }
 }
@@ -68,6 +67,37 @@ pub enum Handoff {
     Waiting(mpsc::Receiver<bool>),
     /// The installer didn't start; shown until the friend closes it.
     Failed { update: Update, reason: String },
+}
+
+#[derive(Debug, PartialEq)]
+pub enum HandoffStep {
+    /// Still waiting for the installer to appear.
+    Wait,
+    /// The installer is running: quit now.
+    Quit,
+    /// The installer didn't start: show the failure and keep running.
+    Failed,
+    /// We're already quitting; nothing more to do (the helper thread has finished).
+    Done,
+}
+
+/// What to do with the result of waiting for the installer's SetupMutex.
+pub fn handoff_step(quitting: bool, recv: Result<bool, mpsc::TryRecvError>) -> HandoffStep {
+    if quitting {
+        return HandoffStep::Done;
+    }
+    match recv {
+        Ok(true) => HandoffStep::Quit,
+        Ok(false) | Err(mpsc::TryRecvError::Disconnected) => HandoffStep::Failed,
+        Err(mpsc::TryRecvError::Empty) => HandoffStep::Wait,
+    }
+}
+
+/// Whether a finished download may go straight to the installer: only if the friend was
+/// watching the download (the dialog was on screen moments ago). Otherwise ask first, so a
+/// restart never surprises them later, e.g. mid-call.
+pub fn auto_install(last_watched: Option<Instant>, now: Instant) -> bool {
+    last_watched.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_secs(2))
 }
 
 pub fn current_version() -> Version {
@@ -118,13 +148,13 @@ pub fn show(app: &mut SoundboardApp, ctx: &egui::Context) {
 
     // Installer handoff in progress or failed: that takes over the dialog.
     if let Some(Handoff::Waiting(rx)) = &app.handoff {
-        match rx.try_recv() {
-            Ok(true) => {
+        match handoff_step(app.quitting, rx.try_recv()) {
+            HandoffStep::Quit => {
                 app.quitting = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            Ok(false) | Err(mpsc::TryRecvError::Disconnected) => {
+            HandoffStep::Failed => {
                 if let UpdateState::Ready { update, .. } = &state {
                     let reason = "The installer didn't start in time.".to_string();
                     handoff_failed(app, update.clone(), reason);
@@ -132,7 +162,7 @@ pub fn show(app: &mut SoundboardApp, ctx: &egui::Context) {
                     app.handoff = None;
                 }
             }
-            Err(mpsc::TryRecvError::Empty) => {}
+            HandoffStep::Wait | HandoffStep::Done => {}
         }
         egui::Modal::new(egui::Id::unique("update")).show(ctx, |ui| {
             ui.label("Starting the installer…");
@@ -172,9 +202,11 @@ pub fn show(app: &mut SoundboardApp, ctx: &egui::Context) {
         return;
     }
 
+    let auto = auto_install(app.download_watched, Instant::now());
     enum Action {
         None,
         Later,
+        Install,
         UpdateNow(Update),
         Cancel,
         Retry(Update),
@@ -210,12 +242,30 @@ pub fn show(app: &mut SoundboardApp, ctx: &egui::Context) {
                 });
             }
             UpdateState::Downloading { update, done } => {
+                app.download_watched = Some(Instant::now());
                 let pct = (*done * 100).checked_div(update.size).unwrap_or(0).min(100);
                 ui.label(format!("Downloading… {pct}%"));
                 ui.add(egui::ProgressBar::new(pct as f32 / 100.0));
                 if ui.button("Cancel").clicked() {
                     action = Action::Cancel;
                 }
+            }
+            UpdateState::Ready { update, .. } if !auto => {
+                // Finished while the window was hidden: ask before restarting.
+                ui.heading("Update ready");
+                ui.label(format!(
+                    "vSoundboard {} is ready to install.",
+                    update.version
+                ));
+                ui.label(RESTART_WARNING);
+                ui.horizontal(|ui| {
+                    if ui.button("Install now").clicked() {
+                        action = Action::Install;
+                    }
+                    if ui.button("Later").clicked() {
+                        action = Action::Later;
+                    }
+                });
             }
             UpdateState::Ready { .. } => {
                 ui.label("Starting the installer…");
@@ -239,7 +289,8 @@ pub fn show(app: &mut SoundboardApp, ctx: &egui::Context) {
     });
     // Esc or clicking outside counts as Later while it's only an offer.
     if response.should_close()
-        && matches!(state, UpdateState::Available { .. })
+        && (matches!(state, UpdateState::Available { .. })
+            || (matches!(state, UpdateState::Ready { .. }) && !auto))
         && matches!(action, Action::None)
     {
         action = Action::Later;
@@ -248,6 +299,7 @@ pub fn show(app: &mut SoundboardApp, ctx: &egui::Context) {
     match action {
         Action::None => {}
         Action::Later => snooze(app),
+        Action::Install => app.download_watched = Some(Instant::now()),
         Action::UpdateNow(u) | Action::Retry(u) => {
             if let Some(w) = &app.updater {
                 w.download(u);
@@ -266,6 +318,7 @@ pub fn show(app: &mut SoundboardApp, ctx: &egui::Context) {
     }
     if let UpdateState::Ready { update, path } = &state
         && app.handoff.is_none()
+        && auto_install(app.download_watched, Instant::now())
     {
         start_handoff(app, update, path);
     }
@@ -330,6 +383,30 @@ mod tests {
             available_text(&Version::new(0, 3, 0), &Version::new(0, 2, 0)),
             "vSoundboard 0.3.0 is available (you have 0.2.0)."
         );
+    }
+
+    #[test]
+    fn handoff_never_fails_after_quitting() {
+        use mpsc::TryRecvError::{Disconnected, Empty};
+        assert_eq!(handoff_step(false, Ok(true)), HandoffStep::Quit);
+        assert_eq!(handoff_step(false, Ok(false)), HandoffStep::Failed);
+        assert_eq!(handoff_step(false, Err(Disconnected)), HandoffStep::Failed);
+        assert_eq!(handoff_step(false, Err(Empty)), HandoffStep::Wait);
+        // After the installer was found, the helper thread's channel closes; that must not
+        // be read as a failure (it would wipe attempted_version and hide a failed install).
+        assert_eq!(handoff_step(true, Err(Disconnected)), HandoffStep::Done);
+        assert_eq!(handoff_step(true, Err(Empty)), HandoffStep::Done);
+    }
+
+    #[test]
+    fn install_only_starts_by_itself_when_watched() {
+        let now = Instant::now();
+        assert!(auto_install(Some(now - Duration::from_millis(200)), now));
+        assert!(
+            !auto_install(Some(now - Duration::from_secs(10)), now),
+            "window was hidden"
+        );
+        assert!(!auto_install(None, now));
     }
 
     #[test]

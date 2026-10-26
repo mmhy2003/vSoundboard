@@ -11,6 +11,13 @@ use super::Update;
 
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
+        // Trust Windows' certificate store, so antivirus HTTPS scanning (which installs its
+        // own root there) doesn't make every update check fail.
+        .tls_config(
+            ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build(),
+        )
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_per_read(Some(Duration::from_secs(30)))
         .build()
@@ -202,6 +209,19 @@ mod tests {
             u.url
                 .starts_with("https://github.com/mmhy2003/vSoundboard/releases/download/")
         );
+    }
+
+    #[test]
+    #[ignore = "downloads the real v0.2.0 installer from GitHub (6 MB)"]
+    fn real_v0_2_0_asset_downloads_and_verifies() {
+        let fixture = include_str!("../../tests/fixtures/release-v0.2.0.json");
+        let u = crate::update::decide(fixture, &semver::Version::new(0, 1, 0))
+            .unwrap()
+            .unwrap();
+        let d = tempfile::tempdir().unwrap();
+        let dest = d.path().join("setup.exe");
+        download(&u, &dest, &AtomicU64::new(0), &AtomicBool::new(false)).unwrap();
+        assert_eq!(std::fs::metadata(&dest).unwrap().len(), u.size);
     }
 
     #[test]
