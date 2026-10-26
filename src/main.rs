@@ -8,6 +8,7 @@ use vsoundboard::cli;
 use vsoundboard::config::{self, LoadOutcome};
 use vsoundboard::single_instance;
 use vsoundboard::ui::{self, SoundboardApp};
+use vsoundboard::update;
 
 /// egui's built-in fonts lack Arabic and many symbols; fall back to Windows' own fonts.
 fn add_system_fonts(ctx: &egui::Context) {
@@ -53,6 +54,37 @@ fn main() -> eframe::Result {
     };
     let read_only = matches!(outcome, LoadOutcome::Unreadable { .. });
     let mut cfg = outcome.into_config();
+
+    // Updates: clean up old downloads, then say whether the last update landed.
+    let _ = std::fs::remove_dir_all(update::worker::download_dir());
+    let running = ui::current_version();
+    let (update_notice, update_link) = match update::startup_notice(
+        &running,
+        cfg.updates.attempted_version.as_deref(),
+        cfg.last_run_version.as_deref(),
+    ) {
+        update::StartupNotice::Updated(v) => (Some(format!("Updated to vSoundboard {v}.")), None),
+        update::StartupNotice::Failed(v) => {
+            cfg.updates.snoozed_until = Some(ui::now_secs() + update::SNOOZE_SECS);
+            (
+                Some(format!(
+                    "The update to vSoundboard {v} didn't install. You can download it manually from GitHub."
+                )),
+                Some(update::RELEASES_PAGE.to_string()),
+            )
+        }
+        update::StartupNotice::None => (None, None),
+    };
+    cfg.updates.attempted_version = None;
+    cfg.last_run_version = Some(running.to_string());
+    if !read_only {
+        let _ = config::save(&path, &cfg);
+    }
+    let notice = notice.or(update_notice);
+    let can_install = std::env::current_exe()
+        .map(|exe| update::is_installed_copy(&exe, update::install_location().as_deref()))
+        .unwrap_or(false);
+    let feed = args.update_feed.clone();
     if !read_only
         && ui::first_run_defaults(
             &mut cfg,
@@ -108,6 +140,15 @@ fn main() -> eframe::Result {
             app.check_files();
             app.enable_hotkeys();
             app.enable_tray(&cc.egui_ctx);
+            app.notice_link = update_link;
+            app.can_install = can_install;
+            let repaint = cc.egui_ctx.clone();
+            app.updater = Some(update::worker::UpdateWorker::start(
+                feed.unwrap_or_else(|| update::API_URL.to_string()),
+                running,
+                can_install && app.config.updates.auto_check,
+                Arc::new(move || repaint.request_repaint()),
+            ));
             Ok(Box::new(app))
         }),
     )

@@ -188,6 +188,7 @@ pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
                 }
             }
             ui.weak(version_label());
+            update_settings(app, ui);
 
             ui.add_space(12.0);
             ui.heading("Setting up Discord");
@@ -197,6 +198,43 @@ pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
             }
         });
     });
+}
+
+fn update_settings(app: &mut SoundboardApp, ui: &mut egui::Ui) {
+    if app.updater.is_none() {
+        return;
+    }
+    let mut auto = app.config.updates.auto_check;
+    if ui
+        .add_enabled(
+            app.can_install,
+            egui::Checkbox::new(&mut auto, "Automatically check for updates"),
+        )
+        .changed()
+    {
+        app.config.updates.auto_check = auto;
+        if let Some(w) = &app.updater {
+            w.set_auto_check(auto);
+        }
+        app.persist();
+    }
+    let Some(worker) = &app.updater else { return };
+    let state = worker.state();
+    ui.horizontal(|ui| {
+        if ui.button("Check for updates").clicked() {
+            worker.check_now();
+        }
+        let current = super::update_dialog::current_version();
+        ui.label(super::update_dialog::status_text(
+            &state,
+            &current,
+            app.can_install,
+        ));
+    });
+    if matches!(state, crate::update::worker::UpdateState::Checking) {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(200));
+    }
 }
 
 #[cfg(test)]

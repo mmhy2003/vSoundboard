@@ -24,8 +24,12 @@ pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
         if let Some(notice) = app.notice.clone() {
             ui.horizontal(|ui| {
                 ui.colored_label(ui.visuals().warn_fg_color, notice);
+                if let Some(link) = app.notice_link.clone() {
+                    ui.hyperlink_to("Open", link);
+                }
                 if ui.small_button("✕").clicked() {
                     app.notice = None;
+                    app.notice_link = None;
                 }
             });
         }
