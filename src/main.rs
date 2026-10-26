@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use vsoundboard::audio::{SharedParams, engine};
+use vsoundboard::audio::{SharedParams, devices, engine};
 use vsoundboard::config::{self, LoadOutcome};
 use vsoundboard::ui::{self, SoundboardApp};
 
@@ -34,7 +34,15 @@ fn main() -> eframe::Result {
         )),
         _ => None,
     };
-    let cfg = outcome.into_config();
+    let mut cfg = outcome.into_config();
+    if ui::first_run_defaults(
+        &mut cfg,
+        &devices::list_outputs(),
+        devices::default_input_name(),
+        devices::default_output_name(),
+    ) {
+        let _ = config::save(&path, &cfg);
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

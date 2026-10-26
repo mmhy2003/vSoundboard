@@ -71,6 +71,20 @@ pub fn list_outputs() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Windows' default recording device, if any.
+pub fn default_input_name() -> Option<String> {
+    cpal::default_host()
+        .default_input_device()
+        .map(|d| d.to_string())
+}
+
+/// Windows' default playback device, if any.
+pub fn default_output_name() -> Option<String> {
+    cpal::default_host()
+        .default_output_device()
+        .map(|d| d.to_string())
+}
+
 /// The VB-Cable playback device ("CABLE Input …"), if installed.
 pub fn find_cable(outputs: &[String]) -> Option<String> {
     outputs

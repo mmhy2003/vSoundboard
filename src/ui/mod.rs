@@ -1,6 +1,7 @@
 mod board;
 mod bottom_bar;
 mod capture;
+mod settings;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ use crate::config::{self, Config, RoutingMode};
 use crate::hotkeys::{HotkeyAction, HotkeyRegistry};
 
 pub use capture::Capture;
+pub use settings::first_run_defaults;
 
 pub const SUPPORTED_EXTENSIONS: [&str; 4] = ["mp3", "wav", "ogg", "flac"];
 
@@ -35,6 +37,8 @@ pub struct SoundboardApp {
     /// Pad being renamed and the text typed so far.
     pub renaming: Option<(u64, String)>,
     pub hotkeys: Option<HotkeyRegistry>,
+    /// (inputs, outputs) shown on the settings screen; refreshed each time it opens.
+    pub device_lists: Option<(Vec<String>, Vec<String>)>,
 }
 
 /// The pad table the engine needs: (id, file, volume).
@@ -76,6 +80,7 @@ impl SoundboardApp {
             capture: None,
             renaming: None,
             hotkeys: None,
+            device_lists: None,
         }
     }
 
@@ -239,7 +244,7 @@ impl eframe::App for SoundboardApp {
                 bottom_bar::show(self, ui);
                 board::show(self, ui);
             }
-            Screen::Settings => board::show(self, ui),
+            Screen::Settings => settings::show(self, ui),
         }
         capture::show(self, ui.ctx());
         board::rename_dialog(self, ui.ctx());
