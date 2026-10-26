@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use vsoundboard::audio::{SharedParams, devices, engine};
+use vsoundboard::cli;
 use vsoundboard::config::{self, LoadOutcome};
 use vsoundboard::single_instance;
 use vsoundboard::ui::{self, SoundboardApp};
@@ -26,8 +27,16 @@ fn add_system_fonts(ctx: &egui::Context) {
 }
 
 fn main() -> eframe::Result {
+    let args = cli::parse(std::env::args());
+    if args.check_vbcable {
+        let found = devices::find_cable(&devices::list_outputs()).is_some();
+        std::process::exit(if found { 0 } else { 1 });
+    }
     let Some(_instance) = single_instance::acquire("vSoundboard") else {
-        single_instance::show_existing("vSoundboard");
+        // A second launch brings the running copy forward, unless it's the hidden autostart one.
+        if !args.minimized {
+            single_instance::show_existing("vSoundboard");
+        }
         return Ok(());
     };
     let path = config::config_path();
@@ -55,12 +64,20 @@ fn main() -> eframe::Result {
         let _ = config::save(&path, &cfg);
     }
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("vSoundboard")
+        .with_inner_size([680.0, 480.0])
+        .with_min_inner_size([360.0, 300.0])
+        .with_drag_and_drop(true);
+    if args.minimized {
+        // eframe always shows the window after its first frame, so a hidden start puts that
+        // frame off-screen without focus, and the app hides the window right after.
+        viewport = viewport
+            .with_position([-32_000.0, -32_000.0])
+            .with_active(false);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("vSoundboard")
-            .with_inner_size([680.0, 480.0])
-            .with_min_inner_size([360.0, 300.0])
-            .with_drag_and_drop(true),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
@@ -79,6 +96,10 @@ fn main() -> eframe::Result {
             let mut app = SoundboardApp::new(cfg, path, eng);
             app.notice = notice;
             app.read_only = read_only;
+            if args.minimized {
+                app.hide_frames = 3;
+                app.parked_offscreen = true;
+            }
             app.check_files();
             app.enable_hotkeys();
             app.enable_tray(&cc.egui_ctx);

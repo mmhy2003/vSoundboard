@@ -46,6 +46,10 @@ pub struct SoundboardApp {
     pub tray: Option<tray_icon::TrayIcon>,
     pub tray_requests: Arc<TrayRequests>,
     quitting: bool,
+    /// Frames left in which to hide the window (start hidden in the tray).
+    pub hide_frames: u8,
+    /// The window was started off-screen (hidden start) and needs a real position when shown.
+    pub parked_offscreen: bool,
     /// Set when the settings file couldn't be read; nothing is saved so it isn't overwritten.
     pub read_only: bool,
 }
@@ -93,6 +97,8 @@ impl SoundboardApp {
             tray: None,
             tray_requests: Arc::default(),
             quitting: false,
+            hide_frames: 0,
+            parked_offscreen: false,
             read_only: false,
         }
     }
@@ -260,7 +266,18 @@ impl eframe::App for SoundboardApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
 
+        if self.hide_frames > 0 {
+            self.hide_frames -= 1;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.request_repaint();
+        }
+
         if self.tray_requests.show.swap(false, Ordering::Relaxed) {
+            if std::mem::take(&mut self.parked_offscreen) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                    160.0, 120.0,
+                )));
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
