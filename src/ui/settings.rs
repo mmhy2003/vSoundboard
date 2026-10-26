@@ -3,6 +3,7 @@ use eframe::egui;
 use super::{Screen, SoundboardApp};
 use crate::audio::devices::{self, DeviceState, find_cable};
 use crate::audio::engine::EngineCommand;
+use crate::autostart;
 use crate::config::{Config, DeviceNames};
 use crate::hotkeys::{self, HotkeyAction};
 
@@ -12,6 +13,11 @@ pub const PTT_HELP: &str =
     "Using Push to Talk? Sounds only reach the call while you hold your Push to Talk key.";
 pub const GO_LIVE_HELP: &str = "Sharing your whole screen with sound? Switch to Go Live mode so viewers hear each sound once. In Go Live mode, friends who aren't watching your stream won't hear sounds.";
 pub const VB_CABLE_URL: &str = "https://vb-audio.com/Cable/";
+
+/// "vSoundboard X.Y.Z", so friends can say which version they run.
+pub fn version_label() -> String {
+    format!("vSoundboard {}", env!("CARGO_PKG_VERSION"))
+}
 
 pub fn status_text(s: &DeviceState) -> String {
     match s {
@@ -86,6 +92,9 @@ fn shortcut_row(
 pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
     if app.device_lists.is_none() {
         app.device_lists = Some((devices::list_inputs(), devices::list_outputs()));
+        app.autostart_on = std::env::current_exe()
+            .ok()
+            .map(|exe| autostart::is_enabled(&exe));
     }
     let (inputs, outputs) = app.device_lists.clone().unwrap_or_default();
     let status = app.engine.status.lock().unwrap().clone();
@@ -168,6 +177,19 @@ pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
                 });
 
             ui.add_space(12.0);
+            if let (Some(mut on), Ok(exe)) = (app.autostart_on, std::env::current_exe())
+                && ui
+                    .checkbox(&mut on, "Start with Windows (in the tray)")
+                    .changed()
+            {
+                match autostart::set_enabled(&exe, on) {
+                    Ok(()) => app.autostart_on = Some(on),
+                    Err(e) => app.notice = Some(format!("Couldn't change Start with Windows: {e}")),
+                }
+            }
+            ui.weak(version_label());
+
+            ui.add_space(12.0);
             ui.heading("Setting up Discord");
             for text in [DISCORD_HELP, PTT_HELP, GO_LIVE_HELP] {
                 ui.add_space(4.0);
@@ -228,6 +250,14 @@ mod tests {
             None
         ));
         assert_eq!(cfg.devices.cable, None);
+    }
+
+    #[test]
+    fn version_label_uses_cargo_version() {
+        assert_eq!(
+            version_label(),
+            format!("vSoundboard {}", env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]

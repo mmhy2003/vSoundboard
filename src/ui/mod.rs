@@ -42,6 +42,8 @@ pub struct SoundboardApp {
     pub hotkeys: Option<HotkeyRegistry>,
     /// (inputs, outputs) shown on the settings screen; refreshed each time it opens.
     pub device_lists: Option<(Vec<String>, Vec<String>)>,
+    /// Whether the Start with Windows entry points at this exe; read when settings open.
+    pub autostart_on: Option<bool>,
     /// Keeps the tray icon alive; while it exists, closing the window hides it instead.
     pub tray: Option<tray_icon::TrayIcon>,
     pub tray_requests: Arc<TrayRequests>,
@@ -94,6 +96,7 @@ impl SoundboardApp {
             renaming: None,
             hotkeys: None,
             device_lists: None,
+            autostart_on: None,
             tray: None,
             tray_requests: Arc::default(),
             quitting: false,
