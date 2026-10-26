@@ -2,6 +2,7 @@ mod board;
 mod bottom_bar;
 mod capture;
 mod settings;
+mod update_dialog;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,6 +20,7 @@ use crate::tray::{self, TrayRequests};
 
 pub use capture::Capture;
 pub use settings::first_run_defaults;
+pub use update_dialog::{current_version, now_secs};
 
 pub const SUPPORTED_EXTENSIONS: [&str; 4] = ["mp3", "wav", "ogg", "flac"];
 
@@ -54,6 +56,16 @@ pub struct SoundboardApp {
     pub parked_offscreen: bool,
     /// Set when the settings file couldn't be read; nothing is saved so it isn't overwritten.
     pub read_only: bool,
+    /// Background update checker (None in tests).
+    pub updater: Option<crate::update::worker::UpdateWorker>,
+    /// True when this is the installed copy, so "Update now" can run the installer.
+    pub can_install: bool,
+    /// The installer handoff after "Update now", if one is under way or failed.
+    pub handoff: Option<update_dialog::Handoff>,
+    /// A link shown next to the notice (e.g. the manual download page).
+    pub notice_link: Option<String>,
+    /// Last frame the download progress was on screen (decides whether to install right away).
+    pub download_watched: Option<std::time::Instant>,
 }
 
 /// The pad table the engine needs: (id, file, volume).
@@ -103,6 +115,11 @@ impl SoundboardApp {
             hide_frames: 0,
             parked_offscreen: false,
             read_only: false,
+            updater: None,
+            can_install: false,
+            handoff: None,
+            notice_link: None,
+            download_watched: None,
         }
     }
 
@@ -322,6 +339,7 @@ impl eframe::App for SoundboardApp {
             Screen::Settings => settings::show(self, ui),
         }
         capture::show(self, ui.ctx());
+        update_dialog::show(self, ui.ctx());
         board::rename_dialog(self, ui.ctx());
         if self.playing.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(200));

@@ -5,6 +5,8 @@ pub struct Args {
     pub minimized: bool,
     /// Exit 0 if VB-Cable is installed, 1 if not; no window (used by the installer).
     pub check_vbcable: bool,
+    /// Test switch for rehearsing updates: use this URL instead of GitHub's latest-release API.
+    pub update_feed: Option<String>,
 }
 
 /// Parse `std::env::args()`-style input; the first item is the program name. Unknown args are ignored.
@@ -14,7 +16,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Args {
         match arg.as_str() {
             "--minimized" => out.minimized = true,
             "--check-vbcable" => out.check_vbcable = true,
-            _ => {}
+            other => {
+                if let Some(url) = other.strip_prefix("--update-feed=") {
+                    out.update_feed = Some(url.to_string());
+                }
+            }
         }
     }
     out
@@ -39,7 +45,8 @@ mod tests {
             p(&["x", "--minimized", "--check-vbcable"]),
             Args {
                 minimized: true,
-                check_vbcable: true
+                check_vbcable: true,
+                update_feed: None
             }
         );
     }
@@ -50,8 +57,18 @@ mod tests {
             p(&["x", "--bogus", "--minimized"]),
             Args {
                 minimized: true,
-                check_vbcable: false
+                check_vbcable: false,
+                update_feed: None
             }
+        );
+    }
+
+    #[test]
+    fn cli_parses_update_feed() {
+        let a = p(&["x", "--update-feed=http://127.0.0.1:8765/latest.json"]);
+        assert_eq!(
+            a.update_feed.as_deref(),
+            Some("http://127.0.0.1:8765/latest.json")
         );
     }
 

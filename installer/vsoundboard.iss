@@ -50,6 +50,8 @@ UninstallDisplayName={#AppName}
 WizardStyle=modern
 ; We close a running vSoundboard ourselves: closing its window only hides it to the tray.
 CloseApplications=no
+; The app waits for this mutex before quitting during an update (src/update/handoff.rs).
+SetupMutex=vSoundboardSetup
 ArchiveExtraction=auto
 Compression=lzma2
 SolidCompression=yes
@@ -215,6 +217,12 @@ begin
   Result := VbWasLaunched;
 end;
 
+{ Started by the app's updater: relaunch vSoundboard when done, whatever happens. }
+function IsUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;
+
 function IsUpgrade: Boolean;
 begin
   Result := RegValueExists(HKCU, UninstallKey, 'UninstallString');
@@ -303,4 +311,25 @@ begin
   { Settings in %APPDATA%\vSoundboard are deliberately left alone. }
   if CurUninstallStep = usUninstall then
     RegDeleteValue(HKCU, RunKey, RunValue);
+end;
+
+{ During an update the app has already quit, so make sure the friend is never left without it:
+  start whatever vSoundboard is installed now (the new one, or the old one after a rollback).
+  Skipped if a copy is still running, e.g. when Setup refused because it couldn't close it. }
+procedure DeinitializeSetup;
+var
+  AppPath: String;
+  ErrorCode: Integer;
+begin
+  if not IsUpdate or CheckForMutexes(AppMutex) then
+    Exit;
+  try
+    AppPath := ExpandConstant('{app}\{#AppExe}');
+    if FileExists(AppPath) then
+      ShellExecAsOriginalUser('open', AppPath, '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode)
+    else
+      Log('Relaunch skipped: ' + AppPath + ' not found');
+  except
+    Log('Relaunch skipped: ' + GetExceptionMessage);
+  end;
 end;
