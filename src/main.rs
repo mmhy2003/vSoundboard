@@ -68,7 +68,12 @@ fn main() -> eframe::Result {
         .with_title("vSoundboard")
         .with_inner_size([680.0, 480.0])
         .with_min_inner_size([360.0, 300.0])
-        .with_drag_and_drop(true);
+        .with_drag_and_drop(true)
+        .with_icon(Arc::new(egui::IconData {
+            rgba: vsoundboard::icon::disc_rgba(64),
+            width: 64,
+            height: 64,
+        }));
     if args.minimized {
         // eframe always shows the window after its first frame, so a hidden start puts that
         // frame off-screen without focus, and the app hides the window right after.
