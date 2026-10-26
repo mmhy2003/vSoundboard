@@ -1,8 +1,66 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use vsoundboard::config;
+use std::sync::Arc;
 
-fn main() {
-    let outcome = config::load(&config::config_path());
-    println!("{outcome:?}");
+use eframe::egui;
+use vsoundboard::audio::{SharedParams, engine};
+use vsoundboard::config::{self, LoadOutcome};
+use vsoundboard::ui::{self, SoundboardApp};
+
+/// egui's built-in fonts lack Arabic and many symbols; fall back to Windows' own fonts.
+fn add_system_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    for (name, file) in [("segoe", "segoeui.ttf"), ("segoe-symbol", "seguisym.ttf")] {
+        let path = std::path::Path::new(r"C:\Windows\Fonts").join(file);
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert(name.into(), Arc::new(egui::FontData::from_owned(bytes)));
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                fonts.families.entry(family).or_default().push(name.into());
+            }
+        }
+    }
+    ctx.set_fonts(fonts);
+}
+
+fn main() -> eframe::Result {
+    let path = config::config_path();
+    let outcome = config::load(&path);
+    let notice = match &outcome {
+        LoadOutcome::RecoveredFromCorrupt { backup, .. } => Some(format!(
+            "Your settings file was damaged, so vSoundboard started fresh. The old file was kept as {}.",
+            backup.display()
+        )),
+        _ => None,
+    };
+    let cfg = outcome.into_config();
+
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("vSoundboard")
+            .with_inner_size([680.0, 480.0])
+            .with_min_inner_size([360.0, 300.0])
+            .with_drag_and_drop(true),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "vSoundboard",
+        options,
+        Box::new(move |cc| {
+            add_system_fonts(&cc.egui_ctx);
+            let ctx = cc.egui_ctx.clone();
+            let params = Arc::new(SharedParams::from_config(&cfg));
+            let eng = engine::start(
+                cfg.devices.clone(),
+                ui::engine_pads(&cfg),
+                params,
+                Arc::new(move || ctx.request_repaint()),
+            );
+            let mut app = SoundboardApp::new(cfg, path, eng);
+            app.notice = notice;
+            app.check_files();
+            Ok(Box::new(app))
+        }),
+    )
 }
