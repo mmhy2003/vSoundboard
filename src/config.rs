@@ -13,6 +13,29 @@ pub struct Config {
     pub volumes: Volumes,
     pub mode: RoutingMode,
     pub next_pad_id: u64,
+    pub updates: UpdateSettings,
+    /// The version that last ran, to show "Updated to …" once after an update.
+    pub last_run_version: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct UpdateSettings {
+    pub auto_check: bool,
+    /// Unix seconds; "Later" hides the update dialog until then.
+    pub snoozed_until: Option<u64>,
+    /// Set just before handing over to the installer, to detect an update that didn't land.
+    pub attempted_version: Option<String>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            snoozed_until: None,
+            attempted_version: None,
+        }
+    }
 }
 
 impl Default for Config {
@@ -26,6 +49,8 @@ impl Default for Config {
             volumes: Volumes::default(),
             mode: RoutingMode::default(),
             next_pad_id: 1,
+            updates: UpdateSettings::default(),
+            last_run_version: None,
         }
     }
 }
@@ -323,6 +348,16 @@ mod tests {
             .collect();
         assert!(leftovers.is_empty());
         assert!(path.exists());
+    }
+
+    #[test]
+    fn old_config_gets_update_defaults() {
+        let (_d, path) = tmp();
+        std::fs::write(&path, r#"{"version":1,"pads":[]}"#).unwrap();
+        let cfg = load(&path).into_config();
+        assert!(cfg.updates.auto_check);
+        assert_eq!(cfg.updates.snoozed_until, None);
+        assert_eq!(cfg.last_run_version, None);
     }
 
     #[test]
