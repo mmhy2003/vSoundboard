@@ -4237,7 +4237,7 @@ dependencies = [
 
 [[package]]
 name = "vsoundboard"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "cpal",
  "crossbeam-channel",

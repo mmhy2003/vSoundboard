@@ -101,6 +101,7 @@ fn main() -> eframe::Result {
         .with_inner_size([680.0, 480.0])
         .with_min_inner_size([360.0, 300.0])
         .with_drag_and_drop(true)
+        .with_window_level(ui::window_level(cfg.always_on_top))
         .with_icon(Arc::new(egui::IconData {
             rgba: vsoundboard::icon::icon_rgba(64).expect("64px icon"),
             width: 64,

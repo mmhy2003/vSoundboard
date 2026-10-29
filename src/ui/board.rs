@@ -19,6 +19,14 @@ pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
                 if ui.button("⚙ Devices").clicked() {
                     app.screen = Screen::Settings;
                 }
+                let pinned = app.config.always_on_top;
+                if ui
+                    .selectable_label(pinned, "📌 Always on top")
+                    .on_hover_text("Keep vSoundboard above other windows")
+                    .clicked()
+                {
+                    app.set_always_on_top(ui.ctx(), !pinned);
+                }
             });
         });
         if let Some(notice) = app.notice.clone() {

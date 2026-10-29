@@ -16,6 +16,8 @@ pub struct Config {
     pub updates: UpdateSettings,
     /// The version that last ran, to show "Updated to …" once after an update.
     pub last_run_version: Option<String>,
+    /// Keep the window above other windows.
+    pub always_on_top: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -51,6 +53,7 @@ impl Default for Config {
             next_pad_id: 1,
             updates: UpdateSettings::default(),
             last_run_version: None,
+            always_on_top: false,
         }
     }
 }
@@ -403,6 +406,19 @@ mod tests {
             .collect();
         assert!(leftovers.is_empty());
         assert!(path.exists());
+    }
+
+    #[test]
+    fn always_on_top_defaults_off_and_round_trips() {
+        let (_d, path) = tmp();
+        std::fs::write(&path, r#"{"version":1,"pads":[]}"#).unwrap();
+        assert!(!load(&path).into_config().always_on_top);
+        let cfg = Config {
+            always_on_top: true,
+            ..Config::default()
+        };
+        save(&path, &cfg).unwrap();
+        assert!(load(&path).into_config().always_on_top);
     }
 
     #[test]
