@@ -76,6 +76,14 @@ pub fn engine_pads(cfg: &Config) -> Vec<(u64, PathBuf, f32)> {
         .collect()
 }
 
+pub fn window_level(always_on_top: bool) -> egui::WindowLevel {
+    if always_on_top {
+        egui::WindowLevel::AlwaysOnTop
+    } else {
+        egui::WindowLevel::Normal
+    }
+}
+
 /// Pads are at least 140 px wide with 8 px gaps; always at least one column.
 pub fn grid_columns(available_width: f32) -> usize {
     const PAD: f32 = 140.0;
@@ -180,6 +188,13 @@ impl SoundboardApp {
         if self.config.move_pad(id, to) {
             self.persist();
         }
+    }
+
+    /// Pin the window above other windows (or unpin it); remembered between restarts.
+    pub fn set_always_on_top(&mut self, ctx: &egui::Context, on: bool) {
+        self.config.always_on_top = on;
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(window_level(on)));
+        self.persist();
     }
 
     pub fn remove_pad(&mut self, id: u64) {

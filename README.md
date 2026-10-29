@@ -81,6 +81,7 @@ If you use Push to Talk, sounds only reach the call while you're holding your Pu
 - **Right-click a pad** to rename it, set its shortcut, change its volume, or remove it.
 - **Stop:** use the ■ Stop button, or set a Stop shortcut under ⚙ Devices.
 - **Shortcuts are taken over:** the key press goes to vSoundboard and doesn't reach the game, so pick combinations you don't use in-game. Letters and other typing keys need Ctrl or Alt.
+- **📌 Always on top** (top bar) keeps the window above other windows. Click it again to turn it off; it's remembered between restarts.
 - **Closing the window** keeps vSoundboard running in the system tray, so shortcuts keep working. Use the tray icon's menu to show the window again or quit.
 
 ### Go Live mode
