@@ -230,6 +230,21 @@ impl Config {
         self.pads.retain(|p| p.id != id);
     }
 
+    /// Move pad `id` so it ends up at index `to` (clamped to the end); the pads in between
+    /// shift along by one. Returns whether anything moved.
+    pub fn move_pad(&mut self, id: u64, to: usize) -> bool {
+        let Some(from) = self.pads.iter().position(|p| p.id == id) else {
+            return false;
+        };
+        let to = to.min(self.pads.len() - 1);
+        if from == to {
+            return false;
+        }
+        let pad = self.pads.remove(from);
+        self.pads.insert(to, pad);
+        true
+    }
+
     pub fn pad(&self, id: u64) -> Option<&Pad> {
         self.pads.iter().find(|p| p.id == id)
     }
@@ -324,6 +339,46 @@ mod tests {
         c.volumes.monitor = f32::NAN;
         normalize(&mut c);
         assert_eq!(c.volumes.monitor, 1.0);
+    }
+
+    fn order(cfg: &Config) -> Vec<&str> {
+        cfg.pads.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    fn abcd() -> Config {
+        let mut cfg = Config::default();
+        for n in ["a", "b", "c", "d"] {
+            cfg.add_pad(format!("{n}.wav").into());
+        }
+        cfg
+    }
+
+    #[test]
+    fn move_pad_forward_pushes_others_back() {
+        let mut cfg = abcd();
+        // Drop "a" (id 1) on "c" (index 2): it takes that spot.
+        assert!(cfg.move_pad(1, 2));
+        assert_eq!(order(&cfg), ["b", "c", "a", "d"]);
+    }
+
+    #[test]
+    fn move_pad_backward_pushes_others_along() {
+        let mut cfg = abcd();
+        // Drop "d" (id 4) on "b" (index 1).
+        assert!(cfg.move_pad(4, 1));
+        assert_eq!(order(&cfg), ["a", "d", "b", "c"]);
+    }
+
+    #[test]
+    fn move_pad_to_end_and_no_ops() {
+        let mut cfg = abcd();
+        assert!(cfg.move_pad(2, usize::MAX), "past the end means last");
+        assert_eq!(order(&cfg), ["a", "c", "d", "b"]);
+        assert!(!cfg.move_pad(1, 0), "already there");
+        assert!(!cfg.move_pad(99, 0), "unknown pad");
+        assert_eq!(order(&cfg), ["a", "c", "d", "b"]);
+        // Ids, names and hotkeys travel with the pad.
+        assert_eq!(cfg.pads[3].id, 2);
     }
 
     #[test]

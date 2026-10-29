@@ -175,6 +175,13 @@ impl SoundboardApp {
         self.capture = Some(Capture::new(target));
     }
 
+    /// Drag-and-drop: move pad `id` to index `to`, pushing the others along; saved right away.
+    pub fn move_pad(&mut self, id: u64, to: usize) {
+        if self.config.move_pad(id, to) {
+            self.persist();
+        }
+    }
+
     pub fn remove_pad(&mut self, id: u64) {
         if self.playing == Some(id) {
             self.engine.send(EngineCommand::Stop);
