@@ -546,12 +546,17 @@ mod tests {
         r.wait_for(|e| *e == PlayerEvent::Stopped { pad: 1 }, 1000);
         std::thread::sleep(Duration::from_millis(300));
         assert!(
-            r.events.try_iter().all(|e| !matches!(e, PlayerEvent::Started { .. })),
+            r.events
+                .try_iter()
+                .all(|e| !matches!(e, PlayerEvent::Started { .. })),
             "it must not restart"
         );
         let from = r.pump.len(0);
         std::thread::sleep(Duration::from_millis(200));
-        assert!(nonzero(&r.pump.since(0, from)).is_empty(), "silent after stopping");
+        assert!(
+            nonzero(&r.pump.since(0, from)).is_empty(),
+            "silent after stopping"
+        );
         // The next press plays it again from the start.
         r.play(1, &a);
         r.wait_for(|e| matches!(e, PlayerEvent::Started { pad: 1, .. }), 1000);
