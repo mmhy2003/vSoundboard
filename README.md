@@ -76,7 +76,7 @@ If you use Push to Talk, sounds only reach the call while you're holding your Pu
 ## Using it
 
 - **Add sounds:** drag MP3, WAV, OGG or FLAC files onto the window, or click **+ Add sound**. Files stay where they are on your PC; vSoundboard just remembers where they are.
-- **Play:** click a pad or press its shortcut. Shortcuts work while Discord or a game has focus. Starting a new sound cuts off the one that's playing. Pressing the playing pad again restarts it.
+- **Play:** click a pad or press its shortcut. Shortcuts work while Discord or a game has focus. Starting a new sound cuts off the one that's playing. Clicking the playing pad again, or pressing its shortcut, stops it.
 - **Right-click a pad** to rename it, set its shortcut, change its volume, or remove it.
 - **Stop:** use the ■ Stop button, or set a Stop shortcut under ⚙ Devices.
 - **Shortcuts are taken over:** the key press goes to vSoundboard and doesn't reach the game, so pick combinations you don't use in-game. Letters and other typing keys need Ctrl or Alt.

@@ -97,6 +97,12 @@ impl Player {
                 }
             };
             match cmd {
+                // Pressing the pad that's playing (click or shortcut) stops it.
+                Some(PlayerCommand::Play { pad, .. })
+                    if self.current.as_ref().is_some_and(|p| p.pad == pad) =>
+                {
+                    self.stop()
+                }
                 Some(PlayerCommand::Play { pad, path, gain }) => self.start(pad, &path, gain),
                 Some(PlayerCommand::Stop) => self.stop(),
                 Some(PlayerCommand::Shutdown) => return,
@@ -529,19 +535,28 @@ mod tests {
     }
 
     #[test]
-    fn retrigger_restarts() {
+    fn retrigger_stops_and_next_press_plays_again() {
         let r = rig([48_000, 48_000], [true, true]);
         let a = r.wav("a.wav", 0.5, 5.0);
         r.play(1, &a);
         r.wait_for(|e| matches!(e, PlayerEvent::Started { .. }), 1000);
         std::thread::sleep(Duration::from_millis(300));
-        let before = r.player.elapsed().unwrap();
-        assert!(before >= Duration::from_millis(150), "{before:?}");
+        // Pressing the playing pad again stops it, and doesn't start it over.
         r.play(1, &a);
         r.wait_for(|e| *e == PlayerEvent::Stopped { pad: 1 }, 1000);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            r.events.try_iter().all(|e| !matches!(e, PlayerEvent::Started { .. })),
+            "it must not restart"
+        );
+        let from = r.pump.len(0);
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(nonzero(&r.pump.since(0, from)).is_empty(), "silent after stopping");
+        // The next press plays it again from the start.
+        r.play(1, &a);
         r.wait_for(|e| matches!(e, PlayerEvent::Started { pad: 1, .. }), 1000);
-        let after = r.player.elapsed().unwrap();
-        assert!(after < Duration::from_millis(100), "{after:?}");
+        let elapsed = r.player.elapsed().unwrap();
+        assert!(elapsed < Duration::from_millis(100), "{elapsed:?}");
     }
 
     #[test]
