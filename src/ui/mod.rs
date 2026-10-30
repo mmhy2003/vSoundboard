@@ -70,8 +70,7 @@ pub struct SoundboardApp {
 
 /// The pad table the engine needs: (id, file, volume).
 pub fn engine_pads(cfg: &Config) -> Vec<(u64, PathBuf, f32)> {
-    cfg.pads
-        .iter()
+    cfg.all_pads()
         .map(|p| (p.id, p.path.clone(), p.volume))
         .collect()
 }
@@ -260,7 +259,7 @@ impl SoundboardApp {
 
     /// Re-check which pad files exist (on startup and after adding).
     pub fn check_files(&mut self) {
-        for pad in &self.config.pads {
+        for pad in self.config.all_pads() {
             if !pad.path.exists() {
                 self.pad_errors
                     .insert(pad.id, format!("File not found: {}", pad.path.display()));
@@ -421,12 +420,12 @@ mod tests {
             d.path().join("b.txt"),
             d.path().join("c.flac"),
         ]);
-        let names: Vec<&str> = app.config.pads.iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = app.config.pads().iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["a", "c"]);
         let notice = app.notice.clone().unwrap();
         assert!(notice.contains("b.txt"), "{notice}");
         // Saved straight away.
-        assert_eq!(config::load(&app.config_path).into_config().pads.len(), 2);
+        assert_eq!(config::load(&app.config_path).into_config().pads().len(), 2);
     }
 
     #[test]
@@ -434,7 +433,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let mut app = app(d.path());
         app.add_files(vec![d.path().join("gone.wav")]);
-        let id = app.config.pads[0].id;
+        let id = app.config.pads()[0].id;
         app.play(id);
         let err = app.pad_errors.get(&id).unwrap();
         assert!(err.starts_with("File not found"), "{err}");

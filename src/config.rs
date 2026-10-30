@@ -6,7 +6,12 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct Config {
     pub version: u32,
-    pub pads: Vec<Pad>,
+    /// Separate boards; only the selected one's pads are shown and have live shortcuts.
+    pub groups: Vec<Group>,
+    pub selected_group: usize,
+    /// The flat pad list of files written before groups existed; read once, never written.
+    #[serde(rename = "pads", skip_serializing)]
+    pub legacy_pads: Option<Vec<Pad>>,
     pub stop_hotkey: Option<String>,
     pub mode_hotkey: Option<String>,
     pub devices: DeviceNames,
@@ -43,8 +48,13 @@ impl Default for UpdateSettings {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            version: 1,
-            pads: Vec::new(),
+            version: 2,
+            groups: vec![Group {
+                name: FIRST_GROUP.into(),
+                pads: Vec::new(),
+            }],
+            selected_group: 0,
+            legacy_pads: None,
             stop_hotkey: None,
             mode_hotkey: None,
             devices: DeviceNames::default(),
@@ -56,6 +66,16 @@ impl Default for Config {
             always_on_top: false,
         }
     }
+}
+
+/// The name of the group a fresh install starts with, and that old pads move into.
+pub const FIRST_GROUP: &str = "Main";
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default)]
+pub struct Group {
+    pub name: String,
+    pub pads: Vec<Pad>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -204,10 +224,10 @@ fn normalize(cfg: &mut Config) {
     cfg.volumes.sounds = clamp_volume(cfg.volumes.sounds);
     cfg.volumes.mic = clamp_volume(cfg.volumes.mic);
     cfg.volumes.monitor = clamp_volume(cfg.volumes.monitor);
-    for pad in &mut cfg.pads {
+    for pad in cfg.groups.iter_mut().flat_map(|g| &mut g.pads) {
         pad.volume = clamp_volume(pad.volume);
     }
-    let max_id = cfg.pads.iter().map(|p| p.id).max().unwrap_or(0);
+    let max_id = cfg.all_pads().map(|p| p.id).max().unwrap_or(0);
     cfg.next_pad_id = cfg.next_pad_id.max(max_id + 1);
 }
 
@@ -219,7 +239,10 @@ impl Config {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        self.pads.push(Pad {
+        let Some(group) = self.groups.get_mut(self.selected_group) else {
+            return id;
+        };
+        group.pads.push(Pad {
             id,
             name,
             path,
@@ -230,30 +253,58 @@ impl Config {
     }
 
     pub fn remove_pad(&mut self, id: u64) {
-        self.pads.retain(|p| p.id != id);
+        for group in &mut self.groups {
+            group.pads.retain(|p| p.id != id);
+        }
     }
 
-    /// Move pad `id` so it ends up at index `to` (clamped to the end); the pads in between
-    /// shift along by one. Returns whether anything moved.
+    /// Move pad `id` so it ends up at index `to` of its group (clamped to the end); the pads in
+    /// between shift along by one. Returns whether anything moved.
     pub fn move_pad(&mut self, id: u64, to: usize) -> bool {
-        let Some(from) = self.pads.iter().position(|p| p.id == id) else {
+        let Some(pads) = self.group_of(id).map(|g| &mut self.groups[g].pads) else {
             return false;
         };
-        let to = to.min(self.pads.len() - 1);
+        let Some(from) = pads.iter().position(|p| p.id == id) else {
+            return false;
+        };
+        let to = to.min(pads.len() - 1);
         if from == to {
             return false;
         }
-        let pad = self.pads.remove(from);
-        self.pads.insert(to, pad);
+        let pad = pads.remove(from);
+        pads.insert(to, pad);
         true
     }
 
+    /// The selected group's pads, in board order.
+    pub fn pads(&self) -> &[Pad] {
+        self.groups
+            .get(self.selected_group)
+            .map(|g| g.pads.as_slice())
+            .unwrap_or_default()
+    }
+
+    /// Every pad in every group.
+    pub fn all_pads(&self) -> impl Iterator<Item = &Pad> {
+        self.groups.iter().flat_map(|g| &g.pads)
+    }
+
+    /// Index of the group holding pad `id`.
+    pub fn group_of(&self, id: u64) -> Option<usize> {
+        self.groups
+            .iter()
+            .position(|g| g.pads.iter().any(|p| p.id == id))
+    }
+
     pub fn pad(&self, id: u64) -> Option<&Pad> {
-        self.pads.iter().find(|p| p.id == id)
+        self.all_pads().find(|p| p.id == id)
     }
 
     pub fn pad_mut(&mut self, id: u64) -> Option<&mut Pad> {
-        self.pads.iter_mut().find(|p| p.id == id)
+        self.groups
+            .iter_mut()
+            .flat_map(|g| &mut g.pads)
+            .find(|p| p.id == id)
     }
 }
 
@@ -281,8 +332,8 @@ mod tests {
         cfg.add_pad(PathBuf::from(r"C:\Users\محمد\🎵 sounds\بروه.wav"));
         save(&path, &cfg).unwrap();
         assert_eq!(load(&path), LoadOutcome::Loaded(cfg.clone()));
-        assert_eq!(cfg.pads[0].name, "airhorn");
-        assert_eq!(cfg.pads[1].name, "بروه");
+        assert_eq!(cfg.pads()[0].name, "airhorn");
+        assert_eq!(cfg.pads()[1].name, "بروه");
     }
 
     #[test]
@@ -311,15 +362,15 @@ mod tests {
         let (_d, path) = tmp();
         std::fs::write(
             &path,
-            r#"{"version":1,"future_field":3,"pads":[{"id":4,"name":"x","path":"C:\\x.wav"}]}"#,
+            r#"{"version":2,"future_field":3,"groups":[{"name":"Main","pads":[{"id":4,"name":"x","path":"C:\\x.wav"}]}]}"#,
         )
         .unwrap();
         let cfg = match load(&path) {
             LoadOutcome::Loaded(c) => c,
             other => panic!("expected Loaded, got {other:?}"),
         };
-        assert_eq!(cfg.pads.len(), 1);
-        assert_eq!(cfg.pads[0].volume, 1.0);
+        assert_eq!(cfg.pads().len(), 1);
+        assert_eq!(cfg.pads()[0].volume, 1.0);
         assert!(cfg.next_pad_id >= 5);
     }
 
@@ -328,14 +379,14 @@ mod tests {
         let (_d, path) = tmp();
         std::fs::write(
             &path,
-            r#"{"volumes":{"sounds":7.5,"mic":0.5,"monitor":0.25},"pads":[{"id":1,"name":"a","path":"a.wav","volume":-2},{"id":2,"name":"b","path":"b.wav","volume":0.5}]}"#,
+            r#"{"volumes":{"sounds":7.5,"mic":0.5,"monitor":0.25},"groups":[{"name":"Main","pads":[{"id":1,"name":"a","path":"a.wav","volume":-2},{"id":2,"name":"b","path":"b.wav","volume":0.5}]}]}"#,
         )
         .unwrap();
         let cfg = load(&path).into_config();
         assert_eq!(cfg.volumes.sounds, 1.0);
         assert_eq!(cfg.volumes.mic, 0.5);
-        assert_eq!(cfg.pads[0].volume, 0.0);
-        assert_eq!(cfg.pads[1].volume, 0.5);
+        assert_eq!(cfg.pads()[0].volume, 0.0);
+        assert_eq!(cfg.pads()[1].volume, 0.5);
 
         // NaN can't be written as JSON, so check normalization directly.
         let mut c = Config::default();
@@ -345,7 +396,7 @@ mod tests {
     }
 
     fn order(cfg: &Config) -> Vec<&str> {
-        cfg.pads.iter().map(|p| p.name.as_str()).collect()
+        cfg.pads().iter().map(|p| p.name.as_str()).collect()
     }
 
     fn abcd() -> Config {
@@ -381,7 +432,7 @@ mod tests {
         assert!(!cfg.move_pad(99, 0), "unknown pad");
         assert_eq!(order(&cfg), ["a", "c", "d", "b"]);
         // Ids, names and hotkeys travel with the pad.
-        assert_eq!(cfg.pads[3].id, 2);
+        assert_eq!(cfg.pads()[3].id, 2);
     }
 
     #[test]
@@ -391,7 +442,7 @@ mod tests {
         cfg.add_pad("b.wav".into());
         cfg.remove_pad(a);
         cfg.add_pad("c.wav".into());
-        let ids: Vec<u64> = cfg.pads.iter().map(|p| p.id).collect();
+        let ids: Vec<u64> = cfg.pads().iter().map(|p| p.id).collect();
         assert_eq!(ids, vec![2, 3]);
     }
 
@@ -449,5 +500,65 @@ mod tests {
             LoadOutcome::Unreadable { config, .. } => assert_eq!(config, Config::default()),
             other => panic!("expected Unreadable, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn default_has_one_empty_main_group() {
+        let c = Config::default();
+        assert_eq!(c.groups.len(), 1);
+        assert_eq!(c.groups[0].name, "Main");
+        assert!(c.pads().is_empty());
+        assert_eq!(c.selected_group, 0);
+    }
+
+    #[test]
+    fn pads_live_in_the_selected_group_but_ids_are_global() {
+        let mut c = Config::default();
+        let a = c.add_pad("a.wav".into());
+        c.groups.push(Group {
+            name: "Gaming".into(),
+            pads: vec![],
+        });
+        c.selected_group = 1;
+        let b = c.add_pad("b.wav".into());
+        assert_ne!(a, b);
+        assert_eq!(c.pads().iter().map(|p| p.id).collect::<Vec<_>>(), vec![b]);
+        assert_eq!(c.all_pads().count(), 2);
+        // Found even in a group that isn't selected.
+        assert_eq!(c.pad(a).unwrap().name, "a");
+        assert_eq!(c.group_of(a), Some(0));
+        c.remove_pad(a);
+        assert_eq!(c.groups[0].pads.len(), 0);
+    }
+
+    #[test]
+    fn move_pad_stays_within_its_group() {
+        let mut c = abcd();
+        c.groups.push(Group {
+            name: "G".into(),
+            pads: vec![],
+        });
+        assert!(c.move_pad(1, usize::MAX));
+        assert_eq!(order(&c), ["b", "c", "d", "a"]);
+        assert!(c.groups[1].pads.is_empty());
+    }
+
+    #[test]
+    fn groups_round_trip_with_selection() {
+        let (_d, path) = tmp();
+        let mut c = abcd();
+        c.groups.push(Group {
+            name: "Gaming".into(),
+            pads: vec![],
+        });
+        c.selected_group = 1;
+        save(&path, &c).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(
+            !json.as_object().unwrap().contains_key("pads"),
+            "flat pads never written"
+        );
+        assert_eq!(load(&path).into_config(), c);
     }
 }

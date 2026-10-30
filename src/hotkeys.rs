@@ -84,8 +84,7 @@ fn key_label(code: Code) -> String {
 /// All parsable bindings in the config; unset or unparsable entries are skipped.
 pub fn bindings(cfg: &Config) -> Vec<(HotKey, HotkeyAction)> {
     let pads = cfg
-        .pads
-        .iter()
+        .all_pads()
         .map(|p| (p.hotkey.as_deref(), HotkeyAction::PlayPad(p.id)));
     let extra = [
         (cfg.stop_hotkey.as_deref(), HotkeyAction::Stop),
