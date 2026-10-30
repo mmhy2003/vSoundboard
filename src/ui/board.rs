@@ -29,6 +29,7 @@ pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
                 }
             });
         });
+        super::groups::tabs(app, ui);
         if let Some(notice) = app.notice.clone() {
             ui.horizontal(|ui| {
                 ui.colored_label(ui.visuals().warn_fg_color, notice);
@@ -44,7 +45,7 @@ pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
     });
 
     egui::CentralPanel::default().show(ui, |ui| {
-        if app.config.pads.is_empty() {
+        if app.config.pads().is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label("Drop MP3, WAV, OGG or FLAC files here, or click “+ Add sound”.");
             });
@@ -57,13 +58,13 @@ pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
             ui.ctx().stop_dragging();
         }
         let dragged = DragAndDrop::payload::<u64>(ui.ctx()).map(|p| *p);
-        let dragged_from = dragged.and_then(|d| app.config.pads.iter().position(|p| p.id == d));
+        let dragged_from = dragged.and_then(|d| app.config.pads().iter().position(|p| p.id == d));
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             let cols = grid_columns(ui.available_width());
             let pads: Vec<_> = app
                 .config
-                .pads
+                .pads()
                 .iter()
                 .map(|p| (p.id, p.name.clone(), p.hotkey.clone()))
                 .collect();

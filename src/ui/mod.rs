@@ -1,6 +1,7 @@
 mod board;
 mod bottom_bar;
 mod capture;
+mod groups;
 mod settings;
 mod update_dialog;
 
@@ -19,6 +20,7 @@ use crate::hotkeys::{HotkeyAction, HotkeyRegistry};
 use crate::tray::{self, TrayRequests};
 
 pub use capture::Capture;
+pub use groups::GroupDialog;
 pub use settings::first_run_defaults;
 pub use update_dialog::{current_version, now_secs};
 
@@ -41,6 +43,10 @@ pub struct SoundboardApp {
     pub capture: Option<Capture>,
     /// Pad being renamed and the text typed so far.
     pub renaming: Option<(u64, String)>,
+    /// The open New / Rename / Delete group dialog.
+    pub group_dialog: Option<GroupDialog>,
+    /// The shortcut warning last put in `notice`, so switching groups can take it down.
+    pub hotkey_notice: Option<String>,
     pub hotkeys: Option<HotkeyRegistry>,
     /// (inputs, outputs) shown on the settings screen; refreshed each time it opens.
     pub device_lists: Option<(Vec<String>, Vec<String>)>,
@@ -70,8 +76,7 @@ pub struct SoundboardApp {
 
 /// The pad table the engine needs: (id, file, volume).
 pub fn engine_pads(cfg: &Config) -> Vec<(u64, PathBuf, f32)> {
-    cfg.pads
-        .iter()
+    cfg.all_pads()
         .map(|p| (p.id, p.path.clone(), p.volume))
         .collect()
 }
@@ -114,6 +119,8 @@ impl SoundboardApp {
             notice: None,
             capture: None,
             renaming: None,
+            group_dialog: None,
+            hotkey_notice: None,
             hotkeys: None,
             device_lists: None,
             autostart_on: None,
@@ -148,13 +155,28 @@ impl SoundboardApp {
         match HotkeyRegistry::new(self.engine.tx.clone()) {
             Ok(reg) => {
                 self.hotkeys = Some(reg);
-                let failures = self.sync_hotkeys();
-                if !failures.is_empty() {
-                    let msgs: Vec<String> = failures.into_iter().map(|(_, m)| m).collect();
-                    self.notice = Some(msgs.join(" "));
-                }
+                self.refresh_hotkeys();
             }
             Err(e) => self.notice = Some(format!("Keyboard shortcuts are unavailable: {e}")),
+        }
+    }
+
+    /// Re-register the live shortcuts, saying which ones Windows refused. A warning left over
+    /// from another group's shortcuts goes away; other notices stay.
+    pub fn refresh_hotkeys(&mut self) {
+        let failures = self.sync_hotkeys();
+        let showing_ours = self.hotkey_notice.is_some() && self.notice == self.hotkey_notice;
+        if failures.is_empty() {
+            if showing_ours {
+                self.notice = None;
+            }
+            self.hotkey_notice = None;
+        } else {
+            let msgs: Vec<String> = failures.into_iter().map(|(_, m)| m).collect();
+            let msg = msgs.join(" ");
+            self.notice = Some(msg.clone());
+            self.notice_link = None;
+            self.hotkey_notice = Some(msg);
         }
     }
 
@@ -195,6 +217,46 @@ impl SoundboardApp {
         self.config.always_on_top = on;
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(window_level(on)));
         self.persist();
+    }
+
+    /// Show another group's board; its shortcuts become the live ones. A sound that's playing
+    /// keeps playing.
+    pub fn select_group(&mut self, index: usize) {
+        if self.config.select_group(index) {
+            self.persist();
+            self.refresh_hotkeys();
+        }
+    }
+
+    /// Add an empty group (the name is already checked) and switch to it.
+    pub fn create_group(&mut self, name: String) {
+        self.config.add_group(name);
+        self.persist();
+        self.refresh_hotkeys();
+    }
+
+    pub fn rename_group(&mut self, index: usize, name: String) {
+        self.config.rename_group(index, name);
+        self.persist();
+    }
+
+    /// Remove a group and its pads (never the audio files), stopping its sound if one plays.
+    pub fn delete_group(&mut self, index: usize) {
+        let Some(group) = self.config.groups.get(index) else {
+            return;
+        };
+        let ids: Vec<u64> = group.pads.iter().map(|p| p.id).collect();
+        if self.config.delete_group(index).is_none() {
+            return;
+        }
+        if self.playing.is_some_and(|p| ids.contains(&p)) {
+            self.engine.send(EngineCommand::Stop);
+        }
+        for id in &ids {
+            self.pad_errors.remove(id);
+        }
+        self.persist();
+        self.refresh_hotkeys();
     }
 
     pub fn remove_pad(&mut self, id: u64) {
@@ -260,7 +322,7 @@ impl SoundboardApp {
 
     /// Re-check which pad files exist (on startup and after adding).
     pub fn check_files(&mut self) {
-        for pad in &self.config.pads {
+        for pad in self.config.all_pads() {
             if !pad.path.exists() {
                 self.pad_errors
                     .insert(pad.id, format!("File not found: {}", pad.path.display()));
@@ -363,6 +425,7 @@ impl eframe::App for SoundboardApp {
         capture::show(self, ui.ctx());
         update_dialog::show(self, ui.ctx());
         board::rename_dialog(self, ui.ctx());
+        groups::dialog(self, ui.ctx());
         if self.playing.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(200));
         }
@@ -421,12 +484,12 @@ mod tests {
             d.path().join("b.txt"),
             d.path().join("c.flac"),
         ]);
-        let names: Vec<&str> = app.config.pads.iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = app.config.pads().iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["a", "c"]);
         let notice = app.notice.clone().unwrap();
         assert!(notice.contains("b.txt"), "{notice}");
         // Saved straight away.
-        assert_eq!(config::load(&app.config_path).into_config().pads.len(), 2);
+        assert_eq!(config::load(&app.config_path).into_config().pads().len(), 2);
     }
 
     #[test]
@@ -434,7 +497,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let mut app = app(d.path());
         app.add_files(vec![d.path().join("gone.wav")]);
-        let id = app.config.pads[0].id;
+        let id = app.config.pads()[0].id;
         app.play(id);
         let err = app.pad_errors.get(&id).unwrap();
         assert!(err.starts_with("File not found"), "{err}");
@@ -456,5 +519,126 @@ mod tests {
         app.read_only = true;
         app.add_files(vec![d.path().join("a.wav")]);
         assert!(!app.config_path.exists());
+    }
+
+    /// Swap the engine's command channel for one the test can read.
+    fn tap_engine(app: &mut SoundboardApp) -> crossbeam_channel::Receiver<EngineCommand> {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        app.engine.tx = tx;
+        rx
+    }
+
+    fn sent_stop(rx: &crossbeam_channel::Receiver<EngineCommand>) -> bool {
+        rx.try_iter().any(|c| matches!(c, EngineCommand::Stop))
+    }
+
+    #[test]
+    fn switching_groups_saves_and_keeps_pads_apart() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.add_files(vec![d.path().join("a.wav")]);
+        app.create_group("Gaming".into());
+        app.add_files(vec![d.path().join("b.wav")]);
+        app.select_group(0);
+        let saved = config::load(&app.config_path).into_config();
+        assert_eq!(saved.selected_group, 0);
+        assert_eq!(saved.groups[1].name, "Gaming");
+        let names: Vec<_> = saved.pads().iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["a"]);
+        app.rename_group(1, "Games".into());
+        assert_eq!(
+            config::load(&app.config_path).into_config().groups[1].name,
+            "Games"
+        );
+    }
+
+    #[test]
+    fn delete_group_stops_its_playing_pad() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.create_group("Gaming".into());
+        app.add_files(vec![d.path().join("gone.wav")]);
+        let id = app.config.pads()[0].id;
+        app.playing = Some(id);
+        app.pad_errors.insert(id, "x".into());
+        let rx = tap_engine(&mut app);
+        app.delete_group(1);
+        assert!(sent_stop(&rx));
+        assert!(app.pad_errors.is_empty());
+        assert_eq!(app.config.groups.len(), 1);
+        assert_eq!(config::load(&app.config_path).into_config().groups.len(), 1);
+    }
+
+    #[test]
+    fn deleting_another_group_leaves_playback_alone() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.add_files(vec![d.path().join("a.wav")]);
+        app.playing = Some(app.config.pads()[0].id);
+        app.create_group("Gaming".into());
+        let rx = tap_engine(&mut app);
+        app.delete_group(1);
+        assert!(!sent_stop(&rx));
+    }
+
+    #[test]
+    fn switching_does_not_stop_playback() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.add_files(vec![d.path().join("a.wav")]);
+        let id = app.config.pads()[0].id;
+        app.playing = Some(id);
+        let rx = tap_engine(&mut app);
+        app.create_group("Gaming".into());
+        app.select_group(0);
+        app.select_group(1);
+        assert!(!sent_stop(&rx));
+        assert_eq!(app.playing, Some(id));
+        assert!(engine_pads(&app.config).iter().any(|(p, _, _)| *p == id));
+    }
+
+    #[test]
+    fn hotkey_warning_follows_the_group() {
+        // Ctrl+Alt+Shift+F22: nothing real uses it. `holder` stands in for another app.
+        const COMBO: &str = "shift+control+alt+F22";
+        let mut held = Config::default();
+        let x = held.add_pad("x.wav".into());
+        held.pad_mut(x).unwrap().hotkey = Some(COMBO.into());
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut holder = crate::hotkeys::HotkeyRegistry::new(tx).unwrap();
+        assert!(holder.sync(&held).is_empty());
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.add_files(vec![d.path().join("a.wav")]);
+        let a = app.config.pads()[0].id;
+        app.config.pad_mut(a).unwrap().hotkey = Some(COMBO.into());
+        app.create_group("Livestream".into());
+        app.enable_hotkeys();
+        app.notice = None;
+
+        app.notice_link = Some("https://example.invalid".into());
+        app.select_group(0);
+        let warning = app.notice.clone().unwrap();
+        assert!(warning.contains("already used by another app"), "{warning}");
+        assert_eq!(
+            app.notice_link, None,
+            "no unrelated link on a shortcut warning"
+        );
+
+        app.select_group(1);
+        assert_eq!(app.notice, None, "the warning was about the other group");
+
+        // A notice that isn't about shortcuts stays put.
+        app.notice = Some("Couldn't save settings: disk full".into());
+        app.select_group(0);
+        app.select_group(1);
+        assert_eq!(app.notice, None);
+        app.notice = Some("Couldn't save settings: disk full".into());
+        app.create_group("Misc".into());
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Couldn't save settings: disk full")
+        );
     }
 }

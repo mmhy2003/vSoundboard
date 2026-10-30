@@ -8,7 +8,7 @@ use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
 use crate::audio::engine::EngineCommand;
-use crate::config::Config;
+use crate::config::{Config, Pad};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HotkeyAction {
@@ -81,28 +81,52 @@ fn key_label(code: Code) -> String {
         .to_string()
 }
 
-/// All parsable bindings in the config; unset or unparsable entries are skipped.
-pub fn bindings(cfg: &Config) -> Vec<(HotKey, HotkeyAction)> {
-    let pads = cfg
-        .pads
-        .iter()
-        .map(|p| (p.hotkey.as_deref(), HotkeyAction::PlayPad(p.id)));
-    let extra = [
+/// The global shortcuts, live whichever group is selected.
+fn global_slots(cfg: &Config) -> [(Option<&str>, HotkeyAction); 2] {
+    [
         (cfg.stop_hotkey.as_deref(), HotkeyAction::Stop),
         (cfg.mode_hotkey.as_deref(), HotkeyAction::ToggleMode),
-    ];
-    pads.chain(extra)
+    ]
+}
+
+fn pad_slots<'a>(
+    pads: impl Iterator<Item = &'a Pad>,
+) -> impl Iterator<Item = (Option<&'a str>, HotkeyAction)> {
+    pads.map(|p| (p.hotkey.as_deref(), HotkeyAction::PlayPad(p.id)))
+}
+
+fn parsed<'a>(
+    slots: impl Iterator<Item = (Option<&'a str>, HotkeyAction)>,
+) -> Vec<(HotKey, HotkeyAction)> {
+    slots
         .filter_map(|(s, action)| Some((parse(s?)?, action)))
         .collect()
 }
 
-/// The action other than `for_action` that already uses `candidate`, if any.
+/// The live bindings: the selected group's pads plus Stop and the Go Live switch. Unset or
+/// unparsable entries are skipped.
+pub fn bindings(cfg: &Config) -> Vec<(HotKey, HotkeyAction)> {
+    parsed(pad_slots(cfg.pads().iter()).chain(global_slots(cfg)))
+}
+
+/// The action other than `for_action` that already uses `candidate`, if any. A pad only clashes
+/// with its own group and the global shortcuts; Stop and Go Live clash with pads in every group.
 pub fn find_conflict(
     cfg: &Config,
     candidate: HotKey,
     for_action: HotkeyAction,
 ) -> Option<HotkeyAction> {
-    bindings(cfg)
+    let rivals = match for_action {
+        HotkeyAction::PlayPad(id) => {
+            let group = cfg.group_of(id).unwrap_or(cfg.selected_group);
+            let pads = cfg.groups.get(group).map(|g| g.pads.as_slice());
+            parsed(pad_slots(pads.unwrap_or_default().iter()).chain(global_slots(cfg)))
+        }
+        HotkeyAction::Stop | HotkeyAction::ToggleMode => {
+            parsed(pad_slots(cfg.all_pads()).chain(global_slots(cfg)))
+        }
+    };
+    rivals
         .into_iter()
         .find(|(hk, action)| {
             *action != for_action && hk.mods == candidate.mods && hk.key == candidate.key
@@ -117,7 +141,10 @@ pub fn conflict_message(cfg: &Config, hk: HotKey, other: HotkeyAction) -> String
                 .pad(id)
                 .map(|p| p.name.as_str())
                 .unwrap_or("another sound");
-            format!("“{name}”")
+            match cfg.group_of(id).filter(|g| *g != cfg.selected_group) {
+                Some(g) => format!("“{name}” in {}", cfg.groups[g].name),
+                None => format!("“{name}”"),
+            }
         }
         HotkeyAction::Stop => "Stop".to_string(),
         HotkeyAction::ToggleMode => "the Go Live switch".to_string(),
@@ -538,6 +565,59 @@ mod tests {
             conflict_message(&cfg, hk(None, Code::F9), HotkeyAction::ToggleMode),
             "F9 is already used by the Go Live switch."
         );
+    }
+
+    fn two_groups_same_key() -> Config {
+        // Main has Airhorn (pad 1) on Ctrl+1; Gaming (selected) has GG (pad 2) on Ctrl+1 too.
+        let mut cfg = cfg_with_pad("Airhorn", "control+Digit1");
+        cfg.add_group("Gaming".into());
+        let gg = cfg.add_pad("gg.wav".into());
+        cfg.pad_mut(gg).unwrap().hotkey = Some("control+Digit1".into());
+        cfg
+    }
+
+    #[test]
+    fn only_selected_group_is_bound() {
+        let cfg = two_groups_same_key();
+        let actions: Vec<_> = bindings(&cfg).into_iter().map(|(_, a)| a).collect();
+        assert_eq!(actions, vec![HotkeyAction::PlayPad(2)]);
+    }
+
+    #[test]
+    fn same_key_allowed_in_another_group() {
+        let cfg = two_groups_same_key();
+        let ctrl1 = hk(Some(Modifiers::CONTROL), Code::Digit1);
+        assert_eq!(find_conflict(&cfg, ctrl1, HotkeyAction::PlayPad(2)), None);
+        assert_eq!(find_conflict(&cfg, ctrl1, HotkeyAction::PlayPad(1)), None);
+    }
+
+    #[test]
+    fn stop_conflicts_with_pads_in_every_group() {
+        let mut cfg = two_groups_same_key();
+        cfg.pad_mut(2).unwrap().hotkey = None;
+        let ctrl1 = hk(Some(Modifiers::CONTROL), Code::Digit1);
+        let other = find_conflict(&cfg, ctrl1, HotkeyAction::Stop).unwrap();
+        assert_eq!(other, HotkeyAction::PlayPad(1));
+        assert_eq!(
+            conflict_message(&cfg, ctrl1, other),
+            "Ctrl+1 is already used by “Airhorn” in Main."
+        );
+        assert_eq!(
+            find_conflict(&cfg, ctrl1, HotkeyAction::ToggleMode),
+            Some(HotkeyAction::PlayPad(1))
+        );
+    }
+
+    #[test]
+    fn bindings_follow_selected_group_after_reload() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("config.json");
+        // Gaming (index 1, not the first group) is selected when the app last saved.
+        let cfg = two_groups_same_key();
+        crate::config::save(&path, &cfg).unwrap();
+        let loaded = crate::config::load(&path).into_config();
+        let actions: Vec<_> = bindings(&loaded).into_iter().map(|(_, a)| a).collect();
+        assert_eq!(actions, vec![HotkeyAction::PlayPad(2)]);
     }
 
     #[test]
