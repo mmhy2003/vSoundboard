@@ -29,6 +29,7 @@ pub fn show(app: &mut SoundboardApp, ui: &mut egui::Ui) {
                 }
             });
         });
+        super::groups::tabs(app, ui);
         if let Some(notice) = app.notice.clone() {
             ui.horizontal(|ui| {
                 ui.colored_label(ui.visuals().warn_fg_color, notice);

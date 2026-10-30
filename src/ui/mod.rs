@@ -1,6 +1,7 @@
 mod board;
 mod bottom_bar;
 mod capture;
+mod groups;
 mod settings;
 mod update_dialog;
 
@@ -19,6 +20,7 @@ use crate::hotkeys::{HotkeyAction, HotkeyRegistry};
 use crate::tray::{self, TrayRequests};
 
 pub use capture::Capture;
+pub use groups::GroupDialog;
 pub use settings::first_run_defaults;
 pub use update_dialog::{current_version, now_secs};
 
@@ -41,6 +43,8 @@ pub struct SoundboardApp {
     pub capture: Option<Capture>,
     /// Pad being renamed and the text typed so far.
     pub renaming: Option<(u64, String)>,
+    /// The open New / Rename / Delete group dialog.
+    pub group_dialog: Option<GroupDialog>,
     pub hotkeys: Option<HotkeyRegistry>,
     /// (inputs, outputs) shown on the settings screen; refreshed each time it opens.
     pub device_lists: Option<(Vec<String>, Vec<String>)>,
@@ -113,6 +117,7 @@ impl SoundboardApp {
             notice: None,
             capture: None,
             renaming: None,
+            group_dialog: None,
             hotkeys: None,
             device_lists: None,
             autostart_on: None,
@@ -407,6 +412,7 @@ impl eframe::App for SoundboardApp {
         capture::show(self, ui.ctx());
         update_dialog::show(self, ui.ctx());
         board::rename_dialog(self, ui.ctx());
+        groups::dialog(self, ui.ctx());
         if self.playing.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(200));
         }
