@@ -114,7 +114,7 @@ Everything that works on the board today works the same way within the selected 
   - TDD, where each change starts from a failing test;
   - `make check` passes (fmt, clippy, tests);
   - work on `develop`;
-  - a new feature means a **minor** version bump at release (v0.5.0), per CLAUDE.md.
+  - a new feature means a **minor** version bump at release (v0.5.0), per the versioning rule the owner agreed. Releasing is the owner's call, so the plan stops before the version bump.
 - **Update the README:** the Features and Using it sections, and a screenshot showing the tabs.
 
 ## Left to the builder
