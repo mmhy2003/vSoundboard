@@ -25,6 +25,7 @@ The people in your Discord call hear your sounds mixed with your voice, and you 
 
 - **A pad for every sound.** Drag in MP3, WAV, OGG or FLAC files and click a pad to play it. A new sound cuts off the one that's playing.
 - **Global keyboard shortcuts.** Shortcuts work while Discord or a game has focus.
+- **Groups.** Keep separate boards for streaming, gaming and anything else; each has its own shortcuts.
 - **Your voice and your sounds, together.** Your real mic is mixed with the sounds into a virtual mic for Discord, with low added delay.
 - **Hear what they hear.** Sounds also play in your headphones, at their own volume.
 - **Go Live mode.** It avoids double audio when you share your whole screen with sound.
@@ -78,6 +79,7 @@ If you use Push to Talk, sounds only reach the call while you're holding your Pu
 - **Add sounds:** drag MP3, WAV, OGG or FLAC files onto the window, or click **+ Add sound**. Files stay where they are on your PC; vSoundboard just remembers where they are.
 - **Play:** click a pad or press its shortcut. Shortcuts work while Discord or a game has focus. Starting a new sound cuts off the one that's playing. Clicking the playing pad again, or pressing its shortcut, stops it.
 - **Drag a pad** to move it: drop it on another pad to take that spot (the others shift along), or in the empty space to move it to the end. Esc cancels.
+- **Groups:** the tabs above the pads are your groups. Click **+** to make one and click a tab to switch to it. Only the selected group's shortcuts work, so the same keys can play different sounds in different groups. Right-click a tab to rename or delete it. To move a sound to another group, remove it and add it again there.
 - **Right-click a pad** to rename it, set its shortcut, change its volume, or remove it.
 - **Stop:** use the ■ Stop button, or set a Stop shortcut under ⚙ Devices.
 - **Shortcuts are taken over:** the key press goes to vSoundboard and doesn't reach the game, so pick combinations you don't use in-game. Letters and other typing keys need Ctrl or Alt.
@@ -101,7 +103,7 @@ vSoundboard checks GitHub for a new version when it starts and every 6 hours.
 
 ## Settings file
 
-Everything is saved automatically to `%APPDATA%\vSoundboard\config.json`. If that file gets damaged, vSoundboard starts fresh and keeps the old file next to it as `config.json.bad-<number>`.
+Everything is saved automatically to `%APPDATA%\vSoundboard\config.json`. If that file gets damaged, vSoundboard starts fresh and keeps the old file next to it as `config.json.bad-<number>`. The first time vSoundboard 0.5 starts, it keeps a copy of your old settings as `config.json.pre-groups`; older versions don't understand groups.
 
 ## Contributing
 
