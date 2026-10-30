@@ -147,13 +147,18 @@ impl SoundboardApp {
         match HotkeyRegistry::new(self.engine.tx.clone()) {
             Ok(reg) => {
                 self.hotkeys = Some(reg);
-                let failures = self.sync_hotkeys();
-                if !failures.is_empty() {
-                    let msgs: Vec<String> = failures.into_iter().map(|(_, m)| m).collect();
-                    self.notice = Some(msgs.join(" "));
-                }
+                self.refresh_hotkeys();
             }
             Err(e) => self.notice = Some(format!("Keyboard shortcuts are unavailable: {e}")),
+        }
+    }
+
+    /// Re-register the live shortcuts, saying which ones Windows refused.
+    pub fn refresh_hotkeys(&mut self) {
+        let failures = self.sync_hotkeys();
+        if !failures.is_empty() {
+            let msgs: Vec<String> = failures.into_iter().map(|(_, m)| m).collect();
+            self.notice = Some(msgs.join(" "));
         }
     }
 
@@ -194,6 +199,46 @@ impl SoundboardApp {
         self.config.always_on_top = on;
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(window_level(on)));
         self.persist();
+    }
+
+    /// Show another group's board; its shortcuts become the live ones. A sound that's playing
+    /// keeps playing.
+    pub fn select_group(&mut self, index: usize) {
+        if self.config.select_group(index) {
+            self.persist();
+            self.refresh_hotkeys();
+        }
+    }
+
+    /// Add an empty group (the name is already checked) and switch to it.
+    pub fn create_group(&mut self, name: String) {
+        self.config.add_group(name);
+        self.persist();
+        self.refresh_hotkeys();
+    }
+
+    pub fn rename_group(&mut self, index: usize, name: String) {
+        self.config.rename_group(index, name);
+        self.persist();
+    }
+
+    /// Remove a group and its pads (never the audio files), stopping its sound if one plays.
+    pub fn delete_group(&mut self, index: usize) {
+        let Some(group) = self.config.groups.get(index) else {
+            return;
+        };
+        let ids: Vec<u64> = group.pads.iter().map(|p| p.id).collect();
+        if self.config.delete_group(index).is_none() {
+            return;
+        }
+        if self.playing.is_some_and(|p| ids.contains(&p)) {
+            self.engine.send(EngineCommand::Stop);
+        }
+        for id in &ids {
+            self.pad_errors.remove(id);
+        }
+        self.persist();
+        self.refresh_hotkeys();
     }
 
     pub fn remove_pad(&mut self, id: u64) {
@@ -455,5 +500,81 @@ mod tests {
         app.read_only = true;
         app.add_files(vec![d.path().join("a.wav")]);
         assert!(!app.config_path.exists());
+    }
+
+    /// Swap the engine's command channel for one the test can read.
+    fn tap_engine(app: &mut SoundboardApp) -> crossbeam_channel::Receiver<EngineCommand> {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        app.engine.tx = tx;
+        rx
+    }
+
+    fn sent_stop(rx: &crossbeam_channel::Receiver<EngineCommand>) -> bool {
+        rx.try_iter().any(|c| matches!(c, EngineCommand::Stop))
+    }
+
+    #[test]
+    fn switching_groups_saves_and_keeps_pads_apart() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.add_files(vec![d.path().join("a.wav")]);
+        app.create_group("Gaming".into());
+        app.add_files(vec![d.path().join("b.wav")]);
+        app.select_group(0);
+        let saved = config::load(&app.config_path).into_config();
+        assert_eq!(saved.selected_group, 0);
+        assert_eq!(saved.groups[1].name, "Gaming");
+        let names: Vec<_> = saved.pads().iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["a"]);
+        app.rename_group(1, "Games".into());
+        assert_eq!(
+            config::load(&app.config_path).into_config().groups[1].name,
+            "Games"
+        );
+    }
+
+    #[test]
+    fn delete_group_stops_its_playing_pad() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.create_group("Gaming".into());
+        app.add_files(vec![d.path().join("gone.wav")]);
+        let id = app.config.pads()[0].id;
+        app.playing = Some(id);
+        app.pad_errors.insert(id, "x".into());
+        let rx = tap_engine(&mut app);
+        app.delete_group(1);
+        assert!(sent_stop(&rx));
+        assert!(app.pad_errors.is_empty());
+        assert_eq!(app.config.groups.len(), 1);
+        assert_eq!(config::load(&app.config_path).into_config().groups.len(), 1);
+    }
+
+    #[test]
+    fn deleting_another_group_leaves_playback_alone() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.add_files(vec![d.path().join("a.wav")]);
+        app.playing = Some(app.config.pads()[0].id);
+        app.create_group("Gaming".into());
+        let rx = tap_engine(&mut app);
+        app.delete_group(1);
+        assert!(!sent_stop(&rx));
+    }
+
+    #[test]
+    fn switching_does_not_stop_playback() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.add_files(vec![d.path().join("a.wav")]);
+        let id = app.config.pads()[0].id;
+        app.playing = Some(id);
+        let rx = tap_engine(&mut app);
+        app.create_group("Gaming".into());
+        app.select_group(0);
+        app.select_group(1);
+        assert!(!sent_stop(&rx));
+        assert_eq!(app.playing, Some(id));
+        assert!(engine_pads(&app.config).iter().any(|(p, _, _)| *p == id));
     }
 }
