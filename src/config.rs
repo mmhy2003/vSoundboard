@@ -181,6 +181,20 @@ pub fn load(path: &Path) -> LoadOutcome {
     };
     match serde_json::from_slice::<Config>(&bytes) {
         Ok(mut cfg) => {
+            if let Some(pads) = cfg.legacy_pads.take() {
+                // Settings from before groups: keep a copy for older versions (only the first
+                // time, so a later re-migration can't replace it), then move the pads into Main.
+                let backup = pre_groups_backup_path(path);
+                if !backup.exists() {
+                    let _ = std::fs::write(&backup, &bytes);
+                }
+                cfg.groups = vec![Group {
+                    name: FIRST_GROUP.into(),
+                    pads,
+                }];
+                cfg.selected_group = 0;
+                cfg.version = 2;
+            }
             normalize(&mut cfg);
             LoadOutcome::Loaded(cfg)
         }
@@ -202,6 +216,13 @@ pub fn load(path: &Path) -> LoadOutcome {
             }
         }
     }
+}
+
+/// Where the settings from before groups existed are kept, next to `config`.
+pub fn pre_groups_backup_path(config: &Path) -> PathBuf {
+    let mut name = config.file_name().unwrap_or_default().to_os_string();
+    name.push(".pre-groups");
+    config.with_file_name(name)
 }
 
 pub fn save(path: &Path, cfg: &Config) -> std::io::Result<()> {
@@ -227,8 +248,42 @@ fn normalize(cfg: &mut Config) {
     for pad in cfg.groups.iter_mut().flat_map(|g| &mut g.pads) {
         pad.volume = clamp_volume(pad.volume);
     }
+    if cfg.groups.is_empty() {
+        cfg.groups.push(Group {
+            name: FIRST_GROUP.into(),
+            pads: Vec::new(),
+        });
+    }
+    if cfg.selected_group >= cfg.groups.len() {
+        cfg.selected_group = 0;
+    }
     let max_id = cfg.all_pads().map(|p| p.id).max().unwrap_or(0);
     cfg.next_pad_id = cfg.next_pad_id.max(max_id + 1);
+    // Pad ids must be unique across groups; later duplicates get fresh ones.
+    let mut seen = std::collections::HashSet::new();
+    for pad in cfg.groups.iter_mut().flat_map(|g| &mut g.pads) {
+        if !seen.insert(pad.id) {
+            pad.id = cfg.next_pad_id;
+            cfg.next_pad_id += 1;
+            seen.insert(pad.id);
+        }
+    }
+    // Names: trimmed, never empty, unique ignoring case.
+    let mut taken: Vec<String> = Vec::new();
+    for (i, group) in cfg.groups.iter_mut().enumerate() {
+        let mut name = group.name.trim().to_string();
+        if name.is_empty() {
+            name = format!("Group {}", i + 1);
+        }
+        let base = name.clone();
+        let mut n = 2;
+        while taken.contains(&name.to_lowercase()) {
+            name = format!("{base} {n}");
+            n += 1;
+        }
+        taken.push(name.to_lowercase());
+        group.name = name;
+    }
 }
 
 impl Config {
@@ -560,5 +615,70 @@ mod tests {
             "flat pads never written"
         );
         assert_eq!(load(&path).into_config(), c);
+    }
+
+    const V1: &str = r#"{"version":1,"stop_hotkey":"control+Digit0","pads":[
+  {"id":1,"name":"Airhorn","path":"a.wav","hotkey":"control+Digit1","volume":0.5},
+  {"id":2,"name":"Bruh","path":"b.wav"}]}"#;
+
+    #[test]
+    fn old_flat_file_migrates_into_main() {
+        let (_d, path) = tmp();
+        std::fs::write(&path, V1).unwrap();
+        let c = load(&path).into_config();
+        assert_eq!(c.groups.len(), 1);
+        assert_eq!(c.groups[0].name, "Main");
+        assert_eq!(order(&c), ["Airhorn", "Bruh"]);
+        assert_eq!(c.pad(1).unwrap().hotkey.as_deref(), Some("control+Digit1"));
+        assert_eq!(c.pad(1).unwrap().volume, 0.5);
+        assert_eq!(c.stop_hotkey.as_deref(), Some("control+Digit0"));
+        assert_eq!(c.legacy_pads, None);
+        assert_eq!(
+            std::fs::read_to_string(pre_groups_backup_path(&path)).unwrap(),
+            V1
+        );
+    }
+
+    #[test]
+    fn migration_keeps_existing_backup() {
+        let (_d, path) = tmp();
+        std::fs::write(pre_groups_backup_path(&path), "original").unwrap();
+        std::fs::write(&path, V1).unwrap();
+        load(&path);
+        assert_eq!(
+            std::fs::read_to_string(pre_groups_backup_path(&path)).unwrap(),
+            "original"
+        );
+    }
+
+    #[test]
+    fn new_format_file_writes_no_backup() {
+        let (_d, path) = tmp();
+        save(&path, &abcd()).unwrap();
+        load(&path);
+        assert!(!pre_groups_backup_path(&path).exists());
+    }
+
+    #[test]
+    fn broken_groups_are_repaired() {
+        let (_d, path) = tmp();
+        std::fs::write(
+            &path,
+            r#"{"version":2,"selected_group":9,"groups":[
+              {"name":"  ","pads":[{"id":1,"name":"a","path":"a.wav"}]},
+              {"name":"Gaming","pads":[{"id":1,"name":"b","path":"b.wav"}]},
+              {"name":"gaming","pads":[]}]}"#,
+        )
+        .unwrap();
+        let c = load(&path).into_config();
+        let names: Vec<_> = c.groups.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["Group 1", "Gaming", "gaming 2"]);
+        assert_eq!(c.selected_group, 0);
+        let ids: Vec<u64> = c.all_pads().map(|p| p.id).collect();
+        assert_eq!(ids, [1, 2]);
+        assert!(c.next_pad_id >= 3);
+
+        std::fs::write(&path, r#"{"version":2,"groups":[]}"#).unwrap();
+        assert_eq!(load(&path).into_config().groups[0].name, "Main");
     }
 }
