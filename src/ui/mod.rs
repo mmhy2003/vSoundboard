@@ -45,6 +45,8 @@ pub struct SoundboardApp {
     pub renaming: Option<(u64, String)>,
     /// The open New / Rename / Delete group dialog.
     pub group_dialog: Option<GroupDialog>,
+    /// The shortcut warning last put in `notice`, so switching groups can take it down.
+    pub hotkey_notice: Option<String>,
     pub hotkeys: Option<HotkeyRegistry>,
     /// (inputs, outputs) shown on the settings screen; refreshed each time it opens.
     pub device_lists: Option<(Vec<String>, Vec<String>)>,
@@ -118,6 +120,7 @@ impl SoundboardApp {
             capture: None,
             renaming: None,
             group_dialog: None,
+            hotkey_notice: None,
             hotkeys: None,
             device_lists: None,
             autostart_on: None,
@@ -158,12 +161,22 @@ impl SoundboardApp {
         }
     }
 
-    /// Re-register the live shortcuts, saying which ones Windows refused.
+    /// Re-register the live shortcuts, saying which ones Windows refused. A warning left over
+    /// from another group's shortcuts goes away; other notices stay.
     pub fn refresh_hotkeys(&mut self) {
         let failures = self.sync_hotkeys();
-        if !failures.is_empty() {
+        let showing_ours = self.hotkey_notice.is_some() && self.notice == self.hotkey_notice;
+        if failures.is_empty() {
+            if showing_ours {
+                self.notice = None;
+            }
+            self.hotkey_notice = None;
+        } else {
             let msgs: Vec<String> = failures.into_iter().map(|(_, m)| m).collect();
-            self.notice = Some(msgs.join(" "));
+            let msg = msgs.join(" ");
+            self.notice = Some(msg.clone());
+            self.notice_link = None;
+            self.hotkey_notice = Some(msg);
         }
     }
 
@@ -582,5 +595,50 @@ mod tests {
         assert!(!sent_stop(&rx));
         assert_eq!(app.playing, Some(id));
         assert!(engine_pads(&app.config).iter().any(|(p, _, _)| *p == id));
+    }
+
+    #[test]
+    fn hotkey_warning_follows_the_group() {
+        // Ctrl+Alt+Shift+F22: nothing real uses it. `holder` stands in for another app.
+        const COMBO: &str = "shift+control+alt+F22";
+        let mut held = Config::default();
+        let x = held.add_pad("x.wav".into());
+        held.pad_mut(x).unwrap().hotkey = Some(COMBO.into());
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut holder = crate::hotkeys::HotkeyRegistry::new(tx).unwrap();
+        assert!(holder.sync(&held).is_empty());
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app(d.path());
+        app.add_files(vec![d.path().join("a.wav")]);
+        let a = app.config.pads()[0].id;
+        app.config.pad_mut(a).unwrap().hotkey = Some(COMBO.into());
+        app.create_group("Livestream".into());
+        app.enable_hotkeys();
+        app.notice = None;
+
+        app.notice_link = Some("https://example.invalid".into());
+        app.select_group(0);
+        let warning = app.notice.clone().unwrap();
+        assert!(warning.contains("already used by another app"), "{warning}");
+        assert_eq!(
+            app.notice_link, None,
+            "no unrelated link on a shortcut warning"
+        );
+
+        app.select_group(1);
+        assert_eq!(app.notice, None, "the warning was about the other group");
+
+        // A notice that isn't about shortcuts stays put.
+        app.notice = Some("Couldn't save settings: disk full".into());
+        app.select_group(0);
+        app.select_group(1);
+        assert_eq!(app.notice, None);
+        app.notice = Some("Couldn't save settings: disk full".into());
+        app.create_group("Misc".into());
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Couldn't save settings: disk full")
+        );
     }
 }

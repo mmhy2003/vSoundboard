@@ -612,12 +612,12 @@ mod tests {
     fn bindings_follow_selected_group_after_reload() {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("config.json");
-        let mut cfg = two_groups_same_key();
-        cfg.select_group(0);
+        // Gaming (index 1, not the first group) is selected when the app last saved.
+        let cfg = two_groups_same_key();
         crate::config::save(&path, &cfg).unwrap();
         let loaded = crate::config::load(&path).into_config();
         let actions: Vec<_> = bindings(&loaded).into_iter().map(|(_, a)| a).collect();
-        assert_eq!(actions, vec![HotkeyAction::PlayPad(1)]);
+        assert_eq!(actions, vec![HotkeyAction::PlayPad(2)]);
     }
 
     #[test]
