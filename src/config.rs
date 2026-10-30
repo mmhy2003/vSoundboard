@@ -351,6 +351,62 @@ impl Config {
             .position(|g| g.pads.iter().any(|p| p.id == id))
     }
 
+    /// The trimmed name, or why it can't be used. `except` is the group being renamed.
+    pub fn check_group_name(&self, name: &str, except: Option<usize>) -> Result<String, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Enter a name.".into());
+        }
+        let clash = self
+            .groups
+            .iter()
+            .enumerate()
+            .find(|(i, g)| Some(*i) != except && g.name.to_lowercase() == name.to_lowercase());
+        match clash {
+            Some((_, g)) => Err(format!("There's already a group called “{}”.", g.name)),
+            None => Ok(name.to_string()),
+        }
+    }
+
+    /// Add an empty group at the end and select it; returns its index.
+    pub fn add_group(&mut self, name: String) -> usize {
+        self.groups.push(Group {
+            name,
+            pads: Vec::new(),
+        });
+        self.selected_group = self.groups.len() - 1;
+        self.selected_group
+    }
+
+    pub fn rename_group(&mut self, index: usize, name: String) {
+        if let Some(g) = self.groups.get_mut(index) {
+            g.name = name;
+        }
+    }
+
+    /// Remove a group and its pads, keeping the selection on the same group when it survives,
+    /// or moving it to the tab that took the deleted one's place. The last group stays.
+    pub fn delete_group(&mut self, index: usize) -> Option<Group> {
+        if self.groups.len() <= 1 || index >= self.groups.len() {
+            return None;
+        }
+        let group = self.groups.remove(index);
+        if self.selected_group > index {
+            self.selected_group -= 1;
+        }
+        self.selected_group = self.selected_group.min(self.groups.len() - 1);
+        Some(group)
+    }
+
+    /// Returns whether the selection changed.
+    pub fn select_group(&mut self, index: usize) -> bool {
+        if index >= self.groups.len() || index == self.selected_group {
+            return false;
+        }
+        self.selected_group = index;
+        true
+    }
+
     pub fn pad(&self, id: u64) -> Option<&Pad> {
         self.all_pads().find(|p| p.id == id)
     }
@@ -680,5 +736,72 @@ mod tests {
 
         std::fs::write(&path, r#"{"version":2,"groups":[]}"#).unwrap();
         assert_eq!(load(&path).into_config().groups[0].name, "Main");
+    }
+
+    fn three_groups() -> Config {
+        let mut c = Config::default();
+        c.add_group("Gaming".into());
+        c.add_group("Misc".into());
+        c
+    }
+
+    #[test]
+    fn add_group_selects_it() {
+        let c = three_groups();
+        assert_eq!(c.selected_group, 2);
+        assert!(c.pads().is_empty());
+    }
+
+    #[test]
+    fn group_names_are_checked() {
+        let c = three_groups();
+        assert_eq!(c.check_group_name("  Live ", None), Ok("Live".into()));
+        assert_eq!(c.check_group_name("   ", None), Err("Enter a name.".into()));
+        assert_eq!(
+            c.check_group_name("gaming", None),
+            Err("There's already a group called “Gaming”.".into())
+        );
+    }
+
+    #[test]
+    fn rename_to_own_name_in_other_case_is_allowed() {
+        let mut c = three_groups();
+        assert_eq!(c.check_group_name("GAMING", Some(1)), Ok("GAMING".into()));
+        c.rename_group(1, "GAMING".into());
+        assert_eq!(c.groups[1].name, "GAMING");
+    }
+
+    #[test]
+    fn last_group_cannot_be_deleted() {
+        let mut c = Config::default();
+        assert!(c.delete_group(0).is_none());
+        assert_eq!(c.groups.len(), 1);
+    }
+
+    #[test]
+    fn delete_before_selected_keeps_selection() {
+        let mut c = three_groups();
+        assert_eq!(c.delete_group(0).unwrap().name, "Main");
+        assert_eq!(c.groups[c.selected_group].name, "Misc");
+    }
+
+    #[test]
+    fn delete_selected_moves_to_neighbour() {
+        let mut c = three_groups();
+        c.select_group(1);
+        c.delete_group(1);
+        assert_eq!(c.groups[c.selected_group].name, "Misc");
+        // Deleting the last tab falls back to the one on its left.
+        c.delete_group(c.selected_group);
+        assert_eq!(c.groups[c.selected_group].name, "Main");
+    }
+
+    #[test]
+    fn select_group_bounds() {
+        let mut c = three_groups();
+        assert!(c.select_group(0));
+        assert!(!c.select_group(0));
+        assert!(!c.select_group(7));
+        assert_eq!(c.selected_group, 0);
     }
 }
